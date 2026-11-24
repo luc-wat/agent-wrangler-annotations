@@ -1,0 +1,23 @@
+{
+  "name": "agent-wrangler-annotations",
+  "version": "0.1.0",
+  "description": "Highlight passages in an Agent Wrangler session's Chat view, note each one, then send them all to the session in one numbered message.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/luc-wat/agent-wrangler-annotations.git"
+  },
+  "keywords": ["agent-wrangler-extension", "annotations", "chat", "comments"],
+  "wranglerExtension": {
+    "id": "annotations",
+    "label": "Session annotations",
+    "description": "Highlight passages in a session's Chat view, note each, and send them all at once.",
+    "author": "luc-wat",
+    "requires": ["session:type"],
+    "engines": { "wranglerApi": "^1.68.0" }
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
