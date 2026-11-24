@@ -1,0 +1,93 @@
+/* Session annotations: marks, note editor and tray, drawn inside core's Chat
+   panel (#chat-stream-wrap and #chat-wrap). Colours come from the board's theme
+   variables, so every theme (and Wrangler²'s own) dresses it. */
+
+::highlight(aw-annotation) {
+  background-color: color-mix(in srgb, var(--warn, #e0b341) 34%, transparent);
+  color: inherit;
+}
+::highlight(aw-annotation-focus) {
+  background-color: color-mix(in srgb, var(--accent, #5b8cff) 45%, transparent);
+  color: inherit;
+}
+
+.aw-annot-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 3; }
+.aw-annot-pin {
+  position: absolute; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  font: 600 11px/18px var(--font, system-ui), sans-serif; text-align: center;
+  background: var(--warn, #e0b341); color: #17130a;
+  box-shadow: 0 1px 3px var(--shadow, rgba(0, 0, 0, .35));
+}
+.aw-annot-pin.focus { background: var(--accent, #5b8cff); color: var(--accent-fg, #fff); }
+
+.aw-annot-add {
+  position: absolute; z-index: 5; display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-radius: 999px; border: 1px solid var(--border, #444);
+  background: var(--surface, #222); color: var(--fg, #eee); cursor: pointer;
+  font: 500 12px var(--font, system-ui), sans-serif; box-shadow: 0 4px 14px var(--shadow, rgba(0, 0, 0, .4));
+}
+.aw-annot-add:hover { border-color: var(--accent, #5b8cff); }
+.aw-annot-add[hidden], .aw-annot-editor[hidden], .aw-annot-tray[hidden] { display: none; }
+
+.aw-annot-editor {
+  position: absolute; z-index: 6; display: flex; flex-direction: column; gap: 8px; padding: 10px;
+  border-radius: 10px; border: 1px solid var(--border, #444); background: var(--surface, #222);
+  color: var(--fg, #eee); box-shadow: 0 10px 30px var(--shadow, rgba(0, 0, 0, .45));
+  font: 13px var(--font, system-ui), sans-serif;
+}
+.aw-annot-editor-quote, .aw-annot-quote {
+  margin: 0; padding: 2px 0 2px 8px; border-left: 3px solid var(--warn, #e0b341);
+  color: var(--fg-muted, #bbb); font-size: 12px; line-height: 1.45;
+  max-height: 4.4em; overflow: hidden;
+}
+.aw-annot-editor-text, .aw-annot-edit-text {
+  width: 100%; box-sizing: border-box; resize: vertical; min-height: 54px; padding: 6px 8px;
+  border-radius: 6px; border: 1px solid var(--border, #444); background: var(--field-bg, var(--bg, #111));
+  color: var(--fg, #eee); font: inherit; font-size: 13px;
+}
+.aw-annot-editor-text:focus, .aw-annot-edit-text:focus { outline: 2px solid var(--accent, #5b8cff); outline-offset: -1px; }
+.aw-annot-editor-row, .aw-annot-actions, .aw-annot-head { display: flex; align-items: center; gap: 6px; }
+.aw-annot-hint { flex: 1; color: var(--fg-subtle, #888); font-size: 11px; }
+.aw-annot-spacer { flex: 1; }
+
+.aw-annot-primary, .aw-annot-quiet {
+  border-radius: 6px; padding: 4px 10px; cursor: pointer; font: 500 12px var(--font, system-ui), sans-serif;
+}
+.aw-annot-primary { border: 1px solid var(--accent, #5b8cff); background: var(--accent, #5b8cff); color: var(--accent-fg, #fff); }
+.aw-annot-quiet { border: 1px solid var(--border-muted, #333); background: transparent; color: var(--fg-muted, #bbb); }
+.aw-annot-quiet:hover { color: var(--fg, #eee); border-color: var(--border, #444); }
+.aw-annot-quiet.armed, .aw-annot-remove:hover { color: var(--red-fg, #f88); border-color: var(--red, #c44); }
+
+.aw-annot-tray {
+  flex: none; max-height: 34%; display: flex; flex-direction: column;
+  border-top: 1px solid var(--border-muted, #333); background: var(--surface, #1c1c1c);
+  color: var(--fg, #eee); font: 13px var(--font, system-ui), sans-serif;
+}
+.aw-annot-head { padding: 6px 10px; }
+.aw-annot-toggle {
+  display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px; border: 0; background: none;
+  color: var(--fg, #eee); cursor: pointer; font: 600 12px var(--font, system-ui), sans-serif;
+}
+.aw-annot-caret { color: var(--fg-subtle, #888); width: 10px; }
+.aw-annot-list { list-style: none; margin: 0; padding: 0 10px 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.aw-annot-item {
+  display: flex; align-items: flex-start; gap: 10px; padding: 7px 8px; border-radius: 8px;
+  border: 1px solid var(--border-muted, #333); background: var(--surface-2, #262626);
+}
+.aw-annot-item.editing { border-color: var(--accent, #5b8cff); }
+.aw-annot-num {
+  flex: none; width: 20px; height: 20px; border-radius: 10px; text-align: center;
+  font: 600 11px/20px var(--font, system-ui), sans-serif;
+  background: var(--warn, #e0b341); color: #17130a;
+}
+.aw-annot-item.editing .aw-annot-num { background: var(--accent, #5b8cff); color: var(--accent-fg, #fff); }
+.aw-annot-item.offscreen .aw-annot-num { opacity: .55; }
+.aw-annot-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.aw-annot-quote { display: block; width: 100%; text-align: left; background: none; border-top: 0; border-right: 0; border-bottom: 0; border-radius: 0; cursor: pointer; font-family: inherit; }
+.aw-annot-quote:hover { color: var(--fg, #eee); }
+.aw-annot-note { margin: 0; white-space: pre-wrap; line-height: 1.45; }
+.aw-annot-note.empty { color: var(--fg-subtle, #888); font-style: italic; }
+.aw-annot-actions { justify-content: flex-end; flex: none; }
+.aw-annot-item.editing .aw-annot-actions { margin-top: 2px; }
+.aw-annot-item:not(.editing) .aw-annot-actions { opacity: .75; }
+.aw-annot-item:hover .aw-annot-actions { opacity: 1; }

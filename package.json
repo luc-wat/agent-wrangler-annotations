@@ -8,14 +8,29 @@
     "type": "git",
     "url": "https://github.com/luc-wat/agent-wrangler-annotations.git"
   },
-  "keywords": ["agent-wrangler-extension", "annotations", "chat", "comments"],
+  "keywords": [
+    "agent-wrangler-extension",
+    "annotations",
+    "chat",
+    "comments"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
   "wranglerExtension": {
     "id": "annotations",
     "label": "Session annotations",
     "description": "Highlight passages in a session's Chat view, note each, and send them all at once.",
     "author": "luc-wat",
-    "requires": ["session:type"],
-    "engines": { "wranglerApi": "^1.68.0" }
+    "requires": [
+      "session:type"
+    ],
+    "engines": {
+      "wranglerApi": "^2.0.0"
+    }
+  },
+  "devDependencies": {
+    "happy-dom": "^21.0.4"
   },
   "engines": {
     "node": ">=20"
