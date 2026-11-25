@@ -59,7 +59,10 @@ export function lendTo(document, host) {
   sidebar.classList.add('session-embed');
 }
 
-export function fakeApi({ session = 's1', panel = 'chat' } = {}) {
+// type() behaves as core's composer does: `text` goes at the END of whatever is
+// in #chat-input, and a submit sends the whole box and empties it. `typed`
+// records what each submit actually sent.
+export function fakeApi({ session = 's1', panel = 'chat', document = null } = {}) {
   const fns = new Set();
   const b = {
     front: { view: 'grid', ext: null, dialog: null, menu: false, session, panel },
@@ -73,6 +76,13 @@ export function fakeApi({ session = 's1', panel = 'chat' } = {}) {
       view: () => b.front.panel,
       type: (text, o) => {
         if (b.refuse) return { ok: false, reason: b.refuse };
+        const input = document?.getElementById('chat-input');
+        if (input) {
+          input.value += text;
+          if (!o?.submit) return { ok: true, view: b.front.panel, submitted: false };
+          text = input.value.trim();
+          input.value = '';
+        }
         b.typed.push({ session: b.front.session, text, submit: !!o?.submit });
         return { ok: true, view: b.front.panel, submitted: !!o?.submit };
       },

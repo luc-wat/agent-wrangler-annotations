@@ -340,14 +340,14 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
     });
     if (clearArmed) clear.classList.add('armed');
     const send = button(doc, 'aw-annot-primary aw-annot-send', 'Send all', sendAll);
-    send.title = 'Send every note to this session as one message';
+    send.title = 'Send every note to this session as one message, with anything typed in the message box at the end';
     head.append(toggle, el(doc, 'span', 'aw-annot-spacer'), clear, send);
     ui.tray.append(head);
     if (collapsed) { paint(); return; }
 
     const ol = el(doc, 'ol', 'aw-annot-list');
     list.forEach((a, i) => ol.append(itemNode(a, i + 1)));
-    ui.tray.append(ol);
+    ui.tray.append(ol, el(doc, 'p', 'aw-annot-foot', 'Anything typed in the message box is sent after your notes, in the same message.'));
     paint();
   }
 
@@ -392,6 +392,12 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
   }
 
   // ── Send all ────────────────────────────────────────────────────────────
+  // Set the message box as the composer would, so it redraws (height, Send).
+  function setInput(input, value) {
+    input.value = value;
+    try { input.dispatchEvent(new win.Event('input', { bubbles: true })); } catch { /* fine */ }
+  }
+
   function toastOf(text, severity) {
     if (toast) return toast(text, severity);
     try { if (api?.ui?.toast?.({ text, severity }) === true) return; } catch { /* fall through */ }
@@ -403,17 +409,20 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
     const list = at ? store.list(at) : [];
     if (!at || at !== sid || !list.length) return { ok: false, reason: 'no-session' };
     if (editingItem) { toastOf('Save or cancel the note you are editing first.', 'warning'); return { ok: false, reason: 'editing' }; }
-    const p = ensure();
-    if (p?.input && p.input.value.trim()) {
-      toastOf('The message box already has text in it. Send or clear it first, so your notes go on their own.', 'warning');
-      return { ok: false, reason: 'draft' };
-    }
     if (typeof api?.sessionPanel?.type !== 'function') {
       toastOf('This Agent Wrangler cannot type into a session (host API 1.68 or later is needed).', 'error');
       return { ok: false, reason: 'unsupported' };
     }
-    const text = composeMessage(list);
+    // Whatever is typed in the message box goes at the bottom of the notes, in
+    // the same message. type() appends to the box, so the draft is taken out
+    // first (or it would be sent twice) and put back if the send fails.
+    const p = ensure();
+    const input = p?.input || null;
+    const draft = input ? input.value : '';
+    const text = composeMessage(list, { draft });
+    if (draft) setInput(input, '');
     const r = api.sessionPanel.type(text, { submit: true }) || { ok: false, reason: 'no-panel' };
+    if (!(r.ok && r.submitted) && draft) setInput(input, draft);
     if (r.ok && r.submitted) {
       store.recordSent(at, { text, items: sentItems(list) });
       store.clear(at);

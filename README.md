@@ -8,8 +8,9 @@ comment-then-send flow to agent conversations. In a session's **Chat** view:
 3. Repeat. Every note is listed in a tray above the message box, where you can **Edit** or
    **Remove** it, or click its excerpt to scroll back to the passage.
 4. Press **Send all**. The session gets one numbered message that quotes each excerpt with your
-   note beneath it, and asks the agent to start each answer with `Re note N:`. The notes are
-   cleared from the tray.
+   note beneath it, and asks the agent to start each answer with `Re note N:`. Anything you have
+   typed in the message box goes at the bottom of that same message. The notes are cleared from
+   the tray and the message box is left empty.
 5. When the agent replies, each `Re note N` label in its answer becomes a small chip. Hover it (or
    focus it with Tab) to see the excerpt and the note it answers.
 
@@ -25,7 +26,12 @@ I have notes on 2 passages of this conversation:
    Our CSP blocks inline scripts. What is the alternative?
 
 Please answer each note in turn and start each answer with its label ("Re note 1:", "Re note 2:" and so on) so I can tell which note it answers.
+
+If both are fine, go ahead and ship it.
 ```
+
+Here the last line is what was typed in the message box when **Send all** was pressed. With an empty
+message box the message ends at the request for labelled answers.
 
 It works wherever core's Chat panel appears: plain board sessions, and the conversations inside
 [Wrangler²](https://github.com/PortSwigger/wrangler-squared) that borrow that panel (a New idea's
@@ -48,9 +54,12 @@ Needs Agent Wrangler with host API 2.0.0 or later.
 
 ## How it behaves
 
-- **Send all** refuses, and keeps your notes, while the message box already holds a draft (so the
-  draft is never merged into the notes), while the session is locked or waiting on a Terminal
-  prompt, or when the message does not go out. A toast says which.
+- **Send all** takes whatever is typed in the message box, trims it and adds it at the bottom of the
+  notes message, after the request for labelled answers, so it all goes as one message and the
+  draft is not left behind or sent twice. A blank message box adds nothing. The tray says so under
+  the list.
+- **Send all** refuses, and keeps your notes and any draft, while the session is locked or waiting
+  on a Terminal prompt, or when the message does not go out. A toast says which.
 - An excerpt is found again by its text, so marks come back after the chat redraws. A passage
   outside the loaded part of a long conversation keeps its note in the tray (its number dims) and
   is still sent.
@@ -66,7 +75,7 @@ Needs Agent Wrangler with host API 2.0.0 or later.
 - **Clear** asks for a second press before it drops every note for the session.
 - Notes live in the browser's `localStorage` under `aw-annotations:v1:<session id>`, so they are
   per browser, not shared between devices. What **Send all** sent (each note's number, excerpt and
-  note, and the message text) is kept under `aw-annotations:sent:v1:<session id>`, the last 20
+  note, and the whole message text, draft included) is kept under `aw-annotations:sent:v1:<session id>`, the last 20
   batches per session, so the chips can show it.
 
 ## Develop
