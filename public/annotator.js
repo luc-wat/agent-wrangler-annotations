@@ -11,10 +11,14 @@
 // board selects the session it lends, so this holds on the board and in every
 // Wrangler² view alike. Send all types through api.sessionPanel.type, which
 // writes into that same panel's composer and sends it.
+//
+// What was sent is kept (store.recordSent), and the agent's "Re note N:" labels
+// in its replies become chips whose hover card shows that note (replies.js).
 
-import { composeMessage, tidyQuote } from './compose.js';
+import { composeMessage, sentItems, tidyQuote } from './compose.js';
 import { findChatPanel, selectionTarget, locate } from './panel.js';
-import { KEY_PREFIX } from './store.js';
+import { labelReplies } from './replies.js';
+import { KEY_PREFIX, SENT_PREFIX } from './store.js';
 
 const HL = 'aw-annotation';
 const HL_FOCUS = 'aw-annotation-focus';
@@ -59,6 +63,8 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
   let flashId = null; // a passage just revealed from the tray, drawn in the focus colour briefly
   let flashTimer = 0;
   let frame = 0;
+  let labelsDirty = true;
+  let popChip = null;
   let collapsed = false;
   try { collapsed = storage?.getItem(COLLAPSED_KEY) === '1'; } catch { /* default open */ }
   const offs = [];
@@ -68,7 +74,11 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
     annotate: el(doc, 'button', 'aw-annot-add'),
     editor: el(doc, 'form', 'aw-annot-editor'),
     tray: el(doc, 'section', 'aw-annot-tray'),
+    pop: el(doc, 'div', 'aw-annot-reply-pop'),
   };
+  ui.pop.hidden = true;
+  ui.pop.id = 'aw-annot-reply-pop';
+  ui.pop.setAttribute('role', 'tooltip');
   ui.layer.setAttribute('aria-hidden', 'true');
   ui.annotate.type = 'button';
   ui.annotate.innerHTML = `${PEN}<span>Annotate</span>`;
@@ -96,19 +106,61 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
     const p = findChatPanel(doc);
     if (!p) return null;
     if (panel?.stream !== p.stream) {
-      panel?.stream.removeEventListener('scroll', schedulePaint);
+      if (panel) {
+        panel.stream.removeEventListener('scroll', schedulePaint);
+        for (const [type, fn] of popEvents) panel.stream.removeEventListener(type, fn);
+      }
       p.stream.addEventListener('scroll', schedulePaint, { passive: true });
+      for (const [type, fn] of popEvents) p.stream.addEventListener(type, fn);
       if (streamObserver) { streamObserver.disconnect(); streamObserver.observe(p.stream, { childList: true, subtree: true, characterData: true }); }
+      labelsDirty = true;
     }
     panel = p;
     if (ui.layer.parentNode !== p.streamWrap) p.streamWrap.append(ui.layer);
     if (ui.annotate.parentNode !== p.streamWrap) p.streamWrap.append(ui.annotate);
     if (ui.editor.parentNode !== p.streamWrap) p.streamWrap.append(ui.editor);
+    if (ui.pop.parentNode !== p.streamWrap) p.streamWrap.append(ui.pop);
     if (ui.tray.parentNode !== p.wrap) p.wrap.insertBefore(ui.tray, p.composer || null);
     return p;
   }
 
-  const streamObserver = typeof win.MutationObserver === 'function' ? new win.MutationObserver(schedulePaint) : null;
+  const onStreamChange = () => { labelsDirty = true; schedulePaint(); };
+  const streamObserver = typeof win.MutationObserver === 'function' ? new win.MutationObserver(onStreamChange) : null;
+
+  // ── reply labels: the hover card ────────────────────────────────────────
+  const chipOf = (e) => e?.target?.closest?.('.aw-annot-reply') || null;
+  function showPop(chip) {
+    const p = panel;
+    if (!p || !chip?.isConnected) return;
+    popChip = chip;
+    ui.pop.replaceChildren(
+      el(doc, 'div', 'aw-annot-reply-pop-head', `Your note ${chip.dataset.n}`),
+      el(doc, 'blockquote', 'aw-annot-reply-pop-quote', excerpt(chip.dataset.quote || '', 300)),
+      el(doc, 'p', `aw-annot-reply-pop-note${chip.dataset.note ? '' : ' empty'}`, chip.dataset.note || 'No note: the passage alone was sent.'),
+    );
+    chip.setAttribute('aria-describedby', ui.pop.id);
+    ui.pop.hidden = false;
+    const box = p.streamWrap.getBoundingClientRect();
+    const r = chip.getBoundingClientRect();
+    const width = Math.min(360, Math.max(220, box.width - 24));
+    ui.pop.style.width = `${width}px`;
+    const height = ui.pop.offsetHeight || 120;
+    const below = r.bottom - box.top + 6;
+    const top = below + height <= box.height - 8 ? below : r.top - box.top - height - 6;
+    ui.pop.style.top = `${Math.max(8, top)}px`;
+    ui.pop.style.left = `${Math.max(8, Math.min(r.left - box.left, box.width - width - 8))}px`;
+  }
+  function hidePop() {
+    popChip?.removeAttribute('aria-describedby');
+    popChip = null;
+    ui.pop.hidden = true;
+  }
+  const popEvents = [
+    ['mouseover', (e) => { const c = chipOf(e); if (c && c !== popChip) showPop(c); }],
+    ['mouseout', (e) => { if (chipOf(e) && !chipOf({ target: e.relatedTarget })) hidePop(); }],
+    ['focusin', (e) => { const c = chipOf(e); if (c) showPop(c); }],
+    ['focusout', (e) => { if (chipOf(e)) hidePop(); }],
+  ];
 
   // ── selection → Annotate button ─────────────────────────────────────────
   function onSelectionEnd() {
@@ -224,6 +276,12 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
     }
     ui.layer.replaceChildren();
     if (!panel) return;
+    if (labelsDirty) {
+      labelsDirty = false;
+      labelReplies(panel.stream, sid ? store.sent(sid) : []);
+      if (popChip && !popChip.isConnected) hidePop();
+      streamObserver?.takeRecords?.();
+    }
     const box = panel.streamWrap.getBoundingClientRect();
     const view = panel.stream.getBoundingClientRect();
     for (const { a, n, range } of located) {
@@ -269,6 +327,7 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
     ui.tray.hidden = list.length === 0;
     ui.tray.classList.toggle('collapsed', collapsed);
     ui.tray.replaceChildren();
+    labelsDirty = true;
     if (!list.length) { editingItem = null; paint(); return; }
 
     const head = el(doc, 'div', 'aw-annot-head');
@@ -356,6 +415,7 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
     const text = composeMessage(list);
     const r = api.sessionPanel.type(text, { submit: true }) || { ok: false, reason: 'no-panel' };
     if (r.ok && r.submitted) {
+      store.recordSent(at, { text, items: sentItems(list) });
       store.clear(at);
       toastOf(`Sent ${list.length} ${list.length === 1 ? 'note' : 'notes'} to the session.`, 'success');
     } else {
@@ -380,6 +440,9 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
   const onStorage = (e) => {
     if (typeof e?.key === 'string' && e.key.startsWith(KEY_PREFIX)) {
       store.forget(e.key.slice(KEY_PREFIX.length));
+      render();
+    } else if (typeof e?.key === 'string' && e.key.startsWith(SENT_PREFIX)) {
+      store.forgetSent(e.key.slice(SENT_PREFIX.length));
       render();
     }
   };
@@ -413,6 +476,8 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
       for (const off of offs) { try { off?.(); } catch { /* fine */ } }
       streamObserver?.disconnect();
       panel?.stream.removeEventListener('scroll', schedulePaint);
+      if (panel) for (const [type, fn] of popEvents) panel.stream.removeEventListener(type, fn);
+      if (panel) labelReplies(panel.stream, []);
       for (const n of Object.values(ui)) n.remove();
       win.CSS?.highlights?.delete(HL);
       win.CSS?.highlights?.delete(HL_FOCUS);

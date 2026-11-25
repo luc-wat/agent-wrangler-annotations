@@ -75,7 +75,7 @@ test('Send all types one numbered message into the shown session and clears its 
   assert.deepEqual(t.board.typed[0], {
     session: 's1',
     submit: true,
-    text: 'I have notes on 2 passages of this conversation:\n\n1. > add the column\n\n   Which type?\n\n2. > drop the old table\n\n   Keep it a week first.',
+    text: 'I have notes on 2 passages of this conversation:\n\n1. > add the column\n\n   Which type?\n\n2. > drop the old table\n\n   Keep it a week first.\n\nPlease answer each note in turn and start each answer with its label ("Re note 1:", "Re note 2:" and so on) so I can tell which note it answers.',
   });
   assert.equal(t.document.querySelector('.aw-annot-tray').hidden, true);
   assert.equal(t.storage.getItem('aw-annotations:v1:s1'), null);
@@ -135,4 +135,42 @@ test('no Annotate button for a selection outside the stream or with no session',
   await wait(t.window);
   assert.equal(t.document.querySelector('.aw-annot-add').hidden, true);
   t.ann.destroy();
+});
+
+test('the agent\'s "Re note N:" labels become chips; hover shows the note; they survive a redraw and a reload', async () => {
+  const t = setup();
+  await annotate(t, 'add the column', 'Which type?');
+  await annotate(t, 'drop the old table', 'Keep it a week first.');
+  t.document.querySelector('.aw-annot-send').click();
+  const sent = t.board.typed[0].text;
+  assert.ok(t.storage.getItem('aw-annotations:sent:v1:s1'), 'the sent batch is recorded');
+
+  const withReply = [...CHAT, { user: sent }, { html: '<p><strong>Re note 1:</strong> a bigint.</p><p>Re note 2: agreed, a week.</p>' }];
+  renderChat(t.document, withReply);
+  await wait(t.window); await wait(t.window);
+  const chips = () => [...t.document.querySelectorAll('#chat-stream .aw-annot-reply')];
+  assert.deepEqual(chips().map((c) => c.textContent), ['Re note 1', 'Re note 2']);
+
+  chips()[0].dispatchEvent(new t.window.MouseEvent('mouseover', { bubbles: true }));
+  const pop = t.document.querySelector('.aw-annot-reply-pop');
+  assert.equal(pop.hidden, false);
+  assert.equal(pop.parentNode.id, 'chat-stream-wrap', 'the card is drawn inside the panel');
+  assert.match(pop.textContent, /add the column/);
+  assert.match(pop.textContent, /Which type\?/);
+  chips()[0].dispatchEvent(new t.window.MouseEvent('mouseout', { bubbles: true }));
+  assert.equal(pop.hidden, true);
+
+  // The chat redraws: the chips come back.
+  renderChat(t.document, withReply);
+  await wait(t.window); await wait(t.window);
+  assert.equal(chips().length, 2);
+  t.ann.destroy();
+  assert.equal(chips().length, 0, 'destroy takes the chips out');
+
+  // A reload: a fresh window over the same storage.
+  const again = setup({ storage: t.storage });
+  renderChat(again.document, withReply);
+  await wait(again.window); await wait(again.window);
+  assert.deepEqual([...again.document.querySelectorAll('.aw-annot-reply')].map((c) => c.dataset.note), ['Which type?', 'Keep it a week first.']);
+  again.ann.destroy();
 });

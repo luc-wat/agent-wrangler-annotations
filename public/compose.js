@@ -1,6 +1,10 @@
 // The one message Send all types into the session: every annotation, numbered
 // in the order the human made them, its excerpt quoted and its note beneath.
-// Pure, so the exact wording is pinned by compose.test.js.
+// It ends by asking the agent to start each answer with "Re note N:", which
+// replies.js turns into a chip showing that note. Pure, so the exact wording is
+// pinned by compose.test.js.
+
+import { LABEL } from './replies.js';
 
 // An excerpt longer than this is cut, with an ellipsis, so one careless
 // select-all cannot bury the notes under pages of the agent's own words.
@@ -39,5 +43,19 @@ export function composeMessage(annotations) {
   const head = list.length === 1
     ? 'I have a note on one passage of this conversation:'
     : `I have notes on ${list.length} passages of this conversation:`;
-  return [head, ...list.map((a, i) => item(i + 1, a))].join('\n\n');
+  return [head, ...list.map((a, i) => item(i + 1, a)), ask(list.length)].join('\n\n');
+}
+
+// The request for labelled answers, worded for one note or several.
+export function ask(count) {
+  if (count === 1) return `Please start your answer with "${LABEL(1)}" so I can tell which note it answers.`;
+  return `Please answer each note in turn and start each answer with its label ("${LABEL(1)}", "${LABEL(2)}" and so on) so I can tell which note it answers.`;
+}
+
+// What Send all records for a batch: each note's number, tidied excerpt and
+// note, as the message numbered them.
+export function sentItems(annotations) {
+  return (Array.isArray(annotations) ? annotations : [])
+    .filter((a) => a && tidyQuote(a.quote))
+    .map((a, i) => ({ n: i + 1, quote: tidyQuote(a.quote), note: String(a.note ?? '').trim() }));
 }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createStore, KEY_PREFIX } from '../public/store.js';
+import { createStore, KEY_PREFIX, SENT_PREFIX, MAX_SENT } from '../public/store.js';
 
 function memoryStorage() {
   const m = new Map();
@@ -91,4 +91,42 @@ test('forget drops the cached copy so another tab’s change is read', () => {
   assert.deepEqual(tabA.list('s1'), []);
   tabA.forget('s1');
   assert.deepEqual(tabA.list('s1').map((a) => a.quote), ['from B']);
+});
+
+test('sent batches are recorded per session, oldest first, and survive a reload and a clear', () => {
+  const storage = memoryStorage();
+  let t = 100;
+  const first = createStore({ storage, newId: ids, now: () => t++ });
+  first.add('s1', { quote: 'alpha', note: 'one' });
+  first.recordSent('s1', { text: 'msg A', items: [{ n: 1, quote: 'alpha', note: 'one' }] });
+  first.clear('s1');
+  first.recordSent('s1', { text: 'msg B', items: [{ n: 1, quote: 'beta', note: 'two' }, { n: 2, quote: 'gamma', note: '' }] });
+  assert.deepEqual(first.sent('s2'), []);
+  assert.ok(storage.getItem(SENT_PREFIX + 's1'));
+  assert.equal(storage.getItem(KEY_PREFIX + 's1'), null, 'the notes themselves are cleared');
+
+  const again = createStore({ storage, newId: ids });
+  assert.deepEqual(again.sent('s1'), [
+    { text: 'msg A', sentAt: 101, items: [{ n: 1, quote: 'alpha', note: 'one' }] },
+    { text: 'msg B', sentAt: 102, items: [{ n: 1, quote: 'beta', note: 'two' }, { n: 2, quote: 'gamma', note: '' }] },
+  ]);
+  // A copy: changing it changes nothing stored.
+  again.sent('s1')[0].items[0].note = 'changed';
+  assert.equal(again.sent('s1')[0].items[0].note, 'one');
+});
+
+test('only the last MAX_SENT batches are kept; junk in storage is dropped', () => {
+  const storage = memoryStorage();
+  storage.setItem(SENT_PREFIX + 's1', JSON.stringify([{ text: 'ok', items: [{ n: 1, quote: 'q' }] }, { text: 5 }, null, { text: 'x', items: [{ n: 0, quote: 'q' }] }]));
+  const store = createStore({ storage, newId: ids });
+  assert.deepEqual(store.sent('s1').map((b) => b.text), ['ok']);
+  for (let i = 0; i < MAX_SENT + 3; i += 1) store.recordSent('s1', { text: `m${i}`, items: [{ n: 1, quote: 'q', note: '' }] });
+  const kept = store.sent('s1');
+  assert.equal(kept.length, MAX_SENT);
+  assert.equal(kept.at(-1).text, `m${MAX_SENT + 2}`);
+  assert.equal(store.recordSent('s1', { text: 'empty', items: [] }), null);
+
+  storage.setItem(SENT_PREFIX + 's1', 'not json');
+  store.forgetSent('s1');
+  assert.deepEqual(store.sent('s1'), []);
 });
