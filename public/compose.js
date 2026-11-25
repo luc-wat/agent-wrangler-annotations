@@ -1,8 +1,9 @@
 // The one message Send all types into the session: every annotation, numbered
 // in the order the human made them, its excerpt quoted and its note beneath.
 // It ends by asking the agent to start each answer with "Re note N:", which
-// replies.js turns into a chip showing that note. Pure, so the exact wording is
-// pinned by compose.test.js.
+// replies.js turns into a chip showing that note. Whatever the human had typed in
+// the message box (`draft`) follows at the bottom, so it goes in the same
+// message. Pure, so the exact wording is pinned by compose.test.js.
 
 import { LABEL } from './replies.js';
 
@@ -37,13 +38,20 @@ function item(n, { quote, note }) {
   return lines.join('\n');
 }
 
-export function composeMessage(annotations) {
+export function composeMessage(annotations, { draft = '' } = {}) {
   const list = (Array.isArray(annotations) ? annotations : []).filter((a) => a && tidyQuote(a.quote));
   if (!list.length) return '';
   const head = list.length === 1
     ? 'I have a note on one passage of this conversation:'
     : `I have notes on ${list.length} passages of this conversation:`;
-  return [head, ...list.map((a, i) => item(i + 1, a)), ask(list.length)].join('\n\n');
+  const tail = tidyDraft(draft);
+  return [head, ...list.map((a, i) => item(i + 1, a)), ask(list.length), ...(tail ? [tail] : [])].join('\n\n');
+}
+
+// The message box's text as it is appended: line endings normalised and the
+// whole trimmed, its own lines and blank lines kept as typed.
+export function tidyDraft(text) {
+  return String(text ?? '').replace(/\r\n?/g, '\n').trim();
 }
 
 // The request for labelled answers, worded for one note or several.

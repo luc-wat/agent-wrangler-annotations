@@ -14,10 +14,11 @@ function setup({ storage, session = 's1', lend = false } = {}) {
   const { document } = window;
   if (lend) lendTo(document, document.querySelector('.job-mc-host'));
   renderChat(document, CHAT);
-  const board = fakeApi({ session });
+  const board = fakeApi({ session, document });
   storage ||= window.localStorage;
-  const ann = createAnnotator({ document, api: board.api, store: createStore({ storage }), storage });
-  return { window, document, board, ann, storage };
+  const store = createStore({ storage });
+  const ann = createAnnotator({ document, api: board.api, store, storage });
+  return { window, document, board, ann, storage, store };
 }
 
 const wait = (window) => new Promise((r) => window.setTimeout(r, 5));
@@ -93,13 +94,44 @@ test('a refused send keeps every note', async () => {
   t.ann.destroy();
 });
 
-test('a draft in the message box is never merged into the notes', async () => {
+const NOTE_MSG = 'I have a note on one passage of this conversation:\n\n1. > add the column\n\n   Which type?\n\nPlease start your answer with "Re note 1:" so I can tell which note it answers.';
+
+test('a draft in the message box goes at the bottom of the notes, as one message, and leaves the box empty', async () => {
   const t = setup();
   await annotate(t, 'add the column', 'Which type?');
-  t.document.getElementById('chat-input').value = 'half-typed thought';
+  const input = t.document.getElementById('chat-input');
+  input.value = '  Also: ship it on Friday?\n\nThanks.  ';
+  t.document.querySelector('.aw-annot-send').click();
+  assert.equal(t.board.typed.length, 1, 'one message');
+  assert.equal(t.board.typed[0].text, `${NOTE_MSG}\n\nAlso: ship it on Friday?\n\nThanks.`);
+  assert.equal(input.value, '', 'the draft is consumed, not left behind');
+  assert.equal(items(t.document).length, 0);
+  assert.equal(t.store.sent('s1').at(-1).text, t.board.typed[0].text, 'the record keeps the whole message');
+  t.ann.destroy();
+});
+
+test('an empty or blank message box sends the notes exactly as before', async () => {
+  for (const blank of ['', '  \n ']) {
+    const t = setup();
+    await annotate(t, 'add the column', 'Which type?');
+    t.document.getElementById('chat-input').value = blank;
+    t.document.querySelector('.aw-annot-send').click();
+    assert.deepEqual(t.board.typed, [{ session: 's1', submit: true, text: NOTE_MSG }]);
+    t.ann.destroy();
+  }
+});
+
+test('a refused send puts the draft back and keeps the notes', async () => {
+  const t = setup();
+  await annotate(t, 'add the column', 'Which type?');
+  const input = t.document.getElementById('chat-input');
+  input.value = 'half-typed thought';
+  t.board.refuse = 'gated';
   t.document.querySelector('.aw-annot-send').click();
   assert.equal(t.board.typed.length, 0);
+  assert.equal(input.value, 'half-typed thought');
   assert.equal(items(t.document).length, 1);
+  assert.equal(t.board.toasts.at(-1).severity, 'error');
   t.ann.destroy();
 });
 

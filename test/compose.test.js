@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { composeMessage, tidyQuote, sentItems, MAX_QUOTE_CHARS } from '../public/compose.js';
+import { composeMessage, tidyQuote, tidyDraft, sentItems, MAX_QUOTE_CHARS } from '../public/compose.js';
 
 test('three annotations become one numbered message, each excerpt quoted with its note beneath', () => {
   const text = composeMessage([
@@ -60,4 +60,16 @@ test('the record of a sent batch numbers notes as the message does, skipping bla
     { n: 1, quote: 'a b', note: 'why?' },
     { n: 2, quote: 'c', note: '' },
   ]);
+});
+
+test('what is typed in the message box goes at the bottom, after the request, trimmed', () => {
+  const base = composeMessage([{ quote: 'x', note: 'y' }]);
+  assert.equal(
+    composeMessage([{ quote: 'x', note: 'y' }], { draft: '  One more thing:\r\n\r\nship Friday?  \n' }),
+    'I have a note on one passage of this conversation:\n\n1. > x\n\n   y\n\nPlease start your answer with "Re note 1:" so I can tell which note it answers.\n\nOne more thing:\n\nship Friday?',
+  );
+  assert.equal(composeMessage([{ quote: 'x', note: 'y' }], { draft: ' \n\t ' }), base, 'a blank draft adds nothing');
+  assert.equal(composeMessage([{ quote: 'x', note: 'y' }], { draft: undefined }), base);
+  assert.equal(composeMessage([], { draft: 'alone' }), '', 'no notes, no message');
+  assert.equal(tidyDraft(null), '');
 });
