@@ -5,6 +5,10 @@
 // annotations simply live in memory for this page.
 
 export const KEY_PREFIX = 'aw-annotations:v1:';
+// What Send all sent, kept so the agent's "Re note N:" labels can show the note
+// they answer. Oldest first, the last MAX_SENT batches per session.
+export const SENT_PREFIX = 'aw-annotations:sent:v1:';
+export const MAX_SENT = 20;
 
 const validSid = (sid) => typeof sid === 'string' && sid.length > 0 && sid.length <= 200;
 
@@ -21,8 +25,18 @@ function clean(a) {
   };
 }
 
+function cleanBatch(b) {
+  if (!b || typeof b !== 'object' || typeof b.text !== 'string' || !Array.isArray(b.items)) return null;
+  const items = b.items
+    .filter((x) => x && Number.isInteger(x.n) && x.n > 0 && typeof x.quote === 'string')
+    .map((x) => ({ n: x.n, quote: x.quote, note: typeof x.note === 'string' ? x.note : '' }));
+  if (!items.length) return null;
+  return { text: b.text, sentAt: Number.isFinite(b.sentAt) ? b.sentAt : 0, items };
+}
+
 export function createStore({ storage = globalThis.localStorage, now = () => Date.now(), newId } = {}) {
   const memory = new Map();
+  const sentMemory = new Map();
   const listeners = new Set();
   let seq = 0;
   const mint = newId || (() => `a${now().toString(36)}${(seq++).toString(36)}${Math.random().toString(36).slice(2, 6)}`);
@@ -48,7 +62,33 @@ export function createStore({ storage = globalThis.localStorage, now = () => Dat
     for (const fn of [...listeners]) fn(sid);
   }
 
+  function readSent(sid) {
+    if (sentMemory.has(sid)) return sentMemory.get(sid);
+    let list = [];
+    try {
+      const raw = storage?.getItem(SENT_PREFIX + sid);
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(parsed)) list = parsed.map(cleanBatch).filter(Boolean);
+    } catch { /* unreadable: start empty */ }
+    sentMemory.set(sid, list);
+    return list;
+  }
+
   return {
+    // Record one sent batch: the message text and each note as it numbered them.
+    recordSent(sid, { text, items }) {
+      if (!validSid(sid)) return null;
+      const b = cleanBatch({ text, items, sentAt: now() });
+      if (!b) return null;
+      const list = [...readSent(sid), b].slice(-MAX_SENT);
+      sentMemory.set(sid, list);
+      try { storage?.setItem(SENT_PREFIX + sid, JSON.stringify(list)); } catch { /* kept in memory only */ }
+      for (const fn of [...listeners]) fn(sid);
+      return structuredClone(b);
+    },
+    sent(sid) {
+      return validSid(sid) ? structuredClone(readSent(sid)) : [];
+    },
     list(sid) {
       return validSid(sid) ? read(sid).map((a) => ({ ...a })) : [];
     },
@@ -80,6 +120,7 @@ export function createStore({ storage = globalThis.localStorage, now = () => Dat
     },
     // Another tab changed this session's annotations: drop the cached copy.
     forget(sid) { memory.delete(sid); },
+    forgetSent(sid) { sentMemory.delete(sid); },
     onChange(fn) { listeners.add(fn); return () => listeners.delete(fn); },
   };
 }

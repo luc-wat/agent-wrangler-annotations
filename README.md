@@ -8,7 +8,10 @@ comment-then-send flow to agent conversations. In a session's **Chat** view:
 3. Repeat. Every note is listed in a tray above the message box, where you can **Edit** or
    **Remove** it, or click its excerpt to scroll back to the passage.
 4. Press **Send all**. The session gets one numbered message that quotes each excerpt with your
-   note beneath it, and the notes are cleared.
+   note beneath it, and asks the agent to start each answer with `Re note N:`. The notes are
+   cleared from the tray.
+5. When the agent replies, each `Re note N` label in its answer becomes a small chip. Hover it (or
+   focus it with Tab) to see the excerpt and the note it answers.
 
 ```text
 I have notes on 2 passages of this conversation:
@@ -20,6 +23,8 @@ I have notes on 2 passages of this conversation:
 2. > To avoid a flash of the wrong theme on load
 
    Our CSP blocks inline scripts. What is the alternative?
+
+Please answer each note in turn and start each answer with its label ("Re note 1:", "Re note 2:" and so on) so I can tell which note it answers.
 ```
 
 It works wherever core's Chat panel appears: plain board sessions, and the conversations inside
@@ -49,9 +54,20 @@ Needs Agent Wrangler with host API 2.0.0 or later.
 - An excerpt is found again by its text, so marks come back after the chat redraws. A passage
   outside the loaded part of a long conversation keeps its note in the tray (its number dims) and
   is still sent.
+- A label becomes a chip only in the agent's messages, only when it reads `Re note N:` (any case,
+  bold or not) and only when note N was in the batch it answers. Labels in code blocks, links and
+  your own messages are left as text.
+- Each reply is matched to the batch it answers: the nearest **Send all** message above it in the
+  chat. So when a later batch reuses a number, an older reply still shows the older note. If that
+  message is outside the loaded part of a long conversation, a later batch's message below the
+  reply bounds it (the reply answers the batch sent before that one), and otherwise the most
+  recent batch is used.
+- Chips are drawn again whenever the chat redraws, and after a reload.
 - **Clear** asks for a second press before it drops every note for the session.
 - Notes live in the browser's `localStorage` under `aw-annotations:v1:<session id>`, so they are
-  per browser, not shared between devices.
+  per browser, not shared between devices. What **Send all** sent (each note's number, excerpt and
+  note, and the message text) is kept under `aw-annotations:sent:v1:<session id>`, the last 20
+  batches per session, so the chips can show it.
 
 ## Develop
 
@@ -61,7 +77,9 @@ npm test
 ```
 
 Tests use `node:test` and [happy-dom](https://github.com/capricorn86/happy-dom): message
-composition (`test/compose.test.js`), persistence (`test/store.test.js`), finding the Chat panel
+composition (`test/compose.test.js`), persistence of notes and sent batches (`test/store.test.js`),
+finding `Re note N:` labels and the batch each reply answers (`test/replies.test.js`), finding the
+Chat panel
 on the board and inside Wrangler²'s `.job-mc-host` and finding excerpts again
 (`test/panel.test.js`), and the whole UI flow against a fake extension API
 (`test/annotator.test.js`).
@@ -76,7 +94,8 @@ AW_DATA_DIR=~/.aw-annotations-dev AW_PORT=7890 node /path/to/agent-wrangler/serv
 The board half is `public/`: `index.js` registers it, `annotator.js` draws the UI inside core's
 `#chat-stream-wrap` and `#chat-wrap` (never on `<body>`, so it travels with the panel when an
 extension view borrows it), `panel.js` finds the panel and the text, `compose.js` writes the
-message and `store.js` keeps the notes.
+message, `store.js` keeps the notes and what was sent, and `replies.js` turns the agent's labels
+into chips.
 
 ## License
 
