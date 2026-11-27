@@ -115,6 +115,23 @@ test('sent batches are recorded per session, oldest first, and survive a reload 
   assert.equal(again.sent('s1')[0].items[0].note, 'one');
 });
 
+test('a sent note keeps its anchor and occurrence; a batch saved without them reads as before', () => {
+  const storage = memoryStorage();
+  storage.setItem(SENT_PREFIX + 'old', JSON.stringify([{ text: 'msg', sentAt: 1, items: [{ n: 1, quote: 'alpha', note: 'one' }] }]));
+  const store = createStore({ storage, newId: ids, now: () => 7 });
+  assert.deepEqual(store.sent('old')[0].items, [{ n: 1, quote: 'alpha', note: 'one' }]);
+  store.recordSent('s1', { text: 'msg', items: [
+    { n: 1, quote: 'alpha', note: 'one', anchor: 'alpha  beta', occurrence: 3 },
+    { n: 2, quote: 'gamma', note: '', anchor: 'gamma', occurrence: -1 },
+    { n: 3, quote: 'delta', note: '', anchor: 5, occurrence: 1 },
+  ] });
+  assert.deepEqual(createStore({ storage, newId: ids }).sent('s1')[0].items, [
+    { n: 1, quote: 'alpha', note: 'one', anchor: 'alpha  beta', occurrence: 3 },
+    { n: 2, quote: 'gamma', note: '', anchor: 'gamma' },
+    { n: 3, quote: 'delta', note: '' },
+  ]);
+});
+
 test('only the last MAX_SENT batches are kept; junk in storage is dropped', () => {
   const storage = memoryStorage();
   storage.setItem(SENT_PREFIX + 's1', JSON.stringify([{ text: 'ok', items: [{ n: 1, quote: 'q' }] }, { text: 5 }, null, { text: 'x', items: [{ n: 0, quote: 'q' }] }]));

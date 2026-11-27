@@ -61,9 +61,16 @@ export function ask(count) {
 }
 
 // What Send all records for a batch: each note's number, tidied excerpt and
-// note, as the message numbered them.
+// note, as the message numbered them, and where its passage is (the exact text
+// and which occurrence of it, as panel.js locate() finds it), so a reply's chip
+// can jump back to it once the marks are cleared.
 export function sentItems(annotations) {
   return (Array.isArray(annotations) ? annotations : [])
     .filter((a) => a && tidyQuote(a.quote))
-    .map((a, i) => ({ n: i + 1, quote: tidyQuote(a.quote), note: String(a.note ?? '').trim() }));
+    .map((a, i) => {
+      const out = { n: i + 1, quote: tidyQuote(a.quote), note: String(a.note ?? '').trim() };
+      if (typeof a.anchor === 'string' && a.anchor) out.anchor = a.anchor;
+      if (out.anchor && Number.isInteger(a.occurrence) && a.occurrence >= 0) out.occurrence = a.occurrence;
+      return out;
+    });
 }

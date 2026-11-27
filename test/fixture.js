@@ -117,3 +117,18 @@ export function selectText(window, text, nth = 0) {
   }
   throw new Error(`"${text}" #${nth} not in the stream`);
 }
+
+// happy-dom has no CSS Custom Highlight API: a stand-in that keeps each
+// highlight's ranges, so a test can read what is marked (and flashed).
+export function fakeHighlights(window) {
+  const highlights = new Map();
+  window.Highlight = class { constructor(...ranges) { this.ranges = ranges; } };
+  // happy-dom hands out a new CSS object on every read.
+  const css = Object.assign(Object.create(window.CSS || null), { highlights });
+  Object.defineProperty(window, 'CSS', { value: css, configurable: true });
+  return {
+    highlights,
+    flashed: () => (highlights.get('aw-annotation-focus')?.ranges || []).map((r) => r.toString()),
+    flashedIn: () => (highlights.get('aw-annotation-focus')?.ranges || []).map((r) => r.startContainer.parentElement),
+  };
+}

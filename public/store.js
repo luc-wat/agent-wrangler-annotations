@@ -6,7 +6,8 @@
 
 export const KEY_PREFIX = 'aw-annotations:v1:';
 // What Send all sent, kept so the agent's "Re note N:" labels can show the note
-// they answer. Oldest first, the last MAX_SENT batches per session.
+// they answer and jump back to its passage. Oldest first, the last MAX_SENT
+// batches per session.
 export const SENT_PREFIX = 'aw-annotations:sent:v1:';
 export const MAX_SENT = 20;
 
@@ -29,7 +30,16 @@ function cleanBatch(b) {
   if (!b || typeof b !== 'object' || typeof b.text !== 'string' || !Array.isArray(b.items)) return null;
   const items = b.items
     .filter((x) => x && Number.isInteger(x.n) && x.n > 0 && typeof x.quote === 'string')
-    .map((x) => ({ n: x.n, quote: x.quote, note: typeof x.note === 'string' ? x.note : '' }));
+    .map((x) => {
+      const item = { n: x.n, quote: x.quote, note: typeof x.note === 'string' ? x.note : '' };
+      // Where the passage is; a batch saved before these were kept has neither,
+      // and its chips look for the excerpt instead.
+      if (typeof x.anchor === 'string' && x.anchor) {
+        item.anchor = x.anchor;
+        if (Number.isInteger(x.occurrence) && x.occurrence >= 0) item.occurrence = x.occurrence;
+      }
+      return item;
+    });
   if (!items.length) return null;
   return { text: b.text, sentAt: Number.isFinite(b.sentAt) ? b.sentAt : 0, items };
 }

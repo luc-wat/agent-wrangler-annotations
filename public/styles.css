@@ -96,7 +96,7 @@
 
 /* The agent's "Re note N" labels, and the card that shows the note on hover. */
 .aw-annot-reply {
-  display: inline-block; padding: 0 7px; border-radius: 999px; cursor: help;
+  display: inline-block; padding: 0 7px; border-radius: 999px; cursor: pointer;
   font: 600 .86em/1.6 var(--font, system-ui), sans-serif; white-space: nowrap;
   background: color-mix(in srgb, var(--warn, #e0b341) 26%, transparent);
   border: 1px solid color-mix(in srgb, var(--warn, #e0b341) 70%, transparent);
@@ -119,6 +119,7 @@
 }
 .aw-annot-reply-pop-note { margin: 0; white-space: pre-wrap; line-height: 1.45; }
 .aw-annot-reply-pop-note.empty { color: var(--fg-subtle, #888); font-style: italic; }
+.aw-annot-reply-pop-hint { margin: 0; font-size: 11px; color: var(--fg-subtle, #888); }
 
 /* Wrangler²'s own chats (wrangler2.js): the conversation, or a thread's parent,
    is the positioned box the floating parts sit in, and the tray is one more row

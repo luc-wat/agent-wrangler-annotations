@@ -152,9 +152,10 @@ export function sendThroughBox({ text, draft, surface }) {
   return { ok: true, submitted: true };
 }
 
-export function conversationAdapter(key, kind, current, batches = null) {
+export function conversationAdapter(key, kind, current, batches = null, annotatorFor = null) {
   return {
     batches,
+    annotatorFor,
     name: `wrangler2-${kind}`,
     boxName: 'Add idea box',
     sentTo: 'Wrangler',
@@ -182,11 +183,13 @@ export function createWrangler2Annotations({ document: doc = globalThis.document
   // Notes sent from a step's thread are answered in that thread and, as the
   // forward's answer, in the conversation with the wrangler too: a reply is
   // matched against what any conversation on screen sent (by the sent text, so
-  // one never takes another's), oldest first.
+  // one never takes another's), oldest first. Each batch says which conversation
+  // sent it, so its chips jump to the passage in that conversation.
   const batches = (key) => {
     const keys = new Set([key, ...live.keys()]);
-    return [...keys].flatMap((k) => store.sent(k)).sort((a, b) => a.sentAt - b.sentAt);
+    return [...keys].flatMap((k) => store.sent(k).map((b) => ({ ...b, key: k }))).sort((a, b) => a.sentAt - b.sentAt);
   };
+  const annotatorFor = (key) => live.get(key)?.ann || null;
 
   function scan() {
     frame = 0;
@@ -208,7 +211,7 @@ export function createWrangler2Annotations({ document: doc = globalThis.document
           return e.el;
         };
         try {
-          e.ann = createAnnotator({ document: doc, api, store, storage, toast, adapter: conversationAdapter(key, c.kind, current, batches) });
+          e.ann = createAnnotator({ document: doc, api, store, storage, toast, adapter: conversationAdapter(key, c.kind, current, batches, annotatorFor) });
         } catch { live.delete(key); }
       } else if (entry.drawn !== c.el) {
         entry.el = entry.drawn = c.el;
