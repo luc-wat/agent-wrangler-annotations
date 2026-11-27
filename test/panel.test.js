@@ -103,3 +103,22 @@ test('an excerpt no longer in the loaded window is not located', () => {
   renderChat(window.document, CHAT);
   assert.equal(locate(window.document.getElementById('chat-stream'), 'never said', 0), null);
 });
+
+test('locate can be held above a message and kept out of others, counting occurrences over the whole stream', () => {
+  const window = makeWindow();
+  const stream = renderChat(window.document, [
+    { html: '<p>use a lock here and a lock there</p>' },
+    { user: 'about "a lock"' },
+    { html: '<p>Re note 1: a lock is fine</p>' },
+  ]);
+  const [answer, sent, reply] = stream.children;
+  const where = (r) => r && [r.startContainer.parentElement.closest('#chat-stream > *'), r.toString()];
+  assert.deepEqual(where(locate(stream, 'a lock', 1, undefined, { before: sent })), [answer, 'a lock'], 'the second occurrence, still above the message');
+  assert.equal(locate(stream, 'a lock', 1, undefined, { before: sent }).startOffset, 'use a lock here and '.length);
+  assert.deepEqual(where(locate(stream, 'a lock', 3, undefined, { before: sent })), [answer, 'a lock'], 'one below it falls back to the first above it');
+  assert.equal(locate(stream, 'a lock', 3, undefined, { before: sent }).startOffset, 'use '.length);
+  assert.deepEqual(where(locate(stream, 'a lock', 3, undefined, { avoid: [reply] })), [answer, 'a lock'], 'an avoided message is never matched');
+  assert.equal(locate(stream, 'Re note', 0, undefined, { avoid: [reply] }), null);
+  assert.equal(locate(stream, 'a lock is', 0, undefined, { before: reply }), null);
+  assert.deepEqual(where(locate(stream, 'a lock', 3)), [reply, 'a lock'], 'without them, as before');
+});

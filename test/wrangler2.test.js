@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createAnnotator } from '../public/annotator.js';
 import { createStore } from '../public/store.js';
 import { createWrangler2Annotations, findConversations, threadKey, boxFor, BOX_MAX } from '../public/wrangler2.js';
-import { renderChat, fakeApi, selectText } from './fixture.js';
+import { renderChat, fakeApi, selectText, fakeHighlights } from './fixture.js';
 import { makeW2Window, selectIn, REVIEW } from './w2-fixture.js';
 
 const settle = (window) => new Promise((r) => window.setTimeout(r, 40));
@@ -294,3 +294,59 @@ test('the board\'s Chat works as before beside them, with its own notes', async 
   assert.deepEqual(items(thread(t.document)).map((i) => i.note), ['Which key?'], 'the thread keeps its own');
   t.destroy();
 });
+
+test('a chip in either Wrangler² chat jumps to its note\'s passage, in the conversation that sent it, and flashes it', async () => {
+  const t = setup();
+  const hl = fakeHighlights(t.window);
+  const scrolled = [];
+  t.window.HTMLElement.prototype.scrollIntoView = function scrollIntoView(o) { scrolled.push({ el: this, o }); };
+  await annotate(t, () => thread(t.document), 'kept in localStorage', 'Which key?');
+  thread(t.document).querySelector('.aw-annot-send').click();
+  const sent = t.view.sent[0].text;
+  // The session answers in its thread (quoting the passage), and the forward's answer shows in the conversation.
+  t.view.state.thread.push({ from: 'human', text: sent, at: '10:12' }, { from: 'agent', html: '<p>Re note 1: kept in localStorage under its own key.</p>', at: '10:15' });
+  t.view.state.convos[0].messages.push({ id: 'm3', from: 'human', text: sent, at: '10:12' }, { id: 't1', from: 'session', html: '<p>Re note 1: kept in localStorage, yes.</p>', at: '10:15' });
+  t.view.draw();
+  await settle(t.window); await settle(t.window);
+  const firstAnswer = () => thread(t.document).querySelectorAll('.job-msg.agent')[0];
+
+  // In the step's thread.
+  thread(t.document).querySelector('.aw-annot-reply').click();
+  assert.deepEqual(hl.flashed(), ['kept in localStorage']);
+  assert.ok(firstAnswer().contains(hl.flashedIn()[0]), 'the session\'s first answer, not the sent message or the reply');
+  assert.ok(firstAnswer().contains(scrolled.at(-1).el) && scrolled.at(-1).o.block === 'center', 'scrolled into view');
+
+  // In the conversation with the wrangler, the forward's answer jumps to the thread, where the note was made.
+  const talkChip = convo(t.document).querySelector('.aw-annot-reply');
+  assert.equal(key(t.window, talkChip, 'Enter'), true);
+  assert.deepEqual(hl.flashed(), ['kept in localStorage']);
+  assert.ok(firstAnswer().contains(hl.flashedIn()[0]));
+
+  // A note made in the conversation with the wrangler and answered there.
+  await annotate(t, () => convo(t.document), 'draws these chats itself', 'Stable?');
+  convo(t.document).querySelector('.aw-annot-send').click();
+  t.view.state.convos[0].messages.push({ id: 'm5', from: 'human', text: t.view.sent[1].text, at: '10:20' }, { id: 'm4', from: 'wrangler', html: '<p>Re note 1: it draws these chats itself, and versions them.</p>', at: '10:21' });
+  t.view.draw();
+  await settle(t.window); await settle(t.window);
+  const chip = [...convo(t.document).querySelectorAll('.aw-annot-reply')].at(-1);
+  assert.equal(chip.dataset.note, 'Stable?');
+  assert.equal(key(t.window, chip, ' '), true);
+  assert.deepEqual(hl.flashed(), ['draws these chats itself']);
+  assert.ok(convo(t.document).querySelector('[data-talk="m2"]').contains(hl.flashedIn()[0]), 'the wrangler\'s first answer');
+  assert.equal(t.api.toasts.filter((x) => x.severity === 'info').length, 0);
+
+  // That answer gone from the loaded conversation: a toast, and the quoted copies are left alone.
+  t.view.state.convos[0].messages = t.view.state.convos[0].messages.filter((m) => m.id !== 'm2');
+  t.view.draw();
+  await settle(t.window); await settle(t.window);
+  [...convo(t.document).querySelectorAll('.aw-annot-reply')].at(-1).click();
+  assert.deepEqual(t.api.toasts.at(-1), { text: 'That passage is not in the loaded part of the conversation.', severity: 'info' });
+  assert.ok(!hl.flashedIn().some((n) => convo(t.document).contains(n)));
+  t.destroy();
+});
+
+const key = (window, el, k) => {
+  const e = new window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true });
+  el.dispatchEvent(e);
+  return e.defaultPrevented;
+};

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createAnnotator } from '../public/annotator.js';
 import { createStore } from '../public/store.js';
-import { makeWindow, renderChat, lendTo, fakeApi, selectText } from './fixture.js';
+import { makeWindow, renderChat, lendTo, fakeApi, selectText, fakeHighlights } from './fixture.js';
 
 const CHAT = [
   { user: 'Plan the migration.' },
@@ -205,4 +205,88 @@ test('the agent\'s "Re note N:" labels become chips; hover shows the note; they 
   await wait(again.window); await wait(again.window);
   assert.deepEqual([...again.document.querySelectorAll('.aw-annot-reply')].map((c) => c.dataset.note), ['Which type?', 'Keep it a week first.']);
   again.ann.destroy();
+});
+
+const chipsIn = (document) => [...document.querySelectorAll('#chat-stream .aw-annot-reply')];
+const key = (window, el, k) => {
+  const e = new window.KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true });
+  el.dispatchEvent(e);
+  return e.defaultPrevented;
+};
+
+test('a "Re note N" chip is a button: click, Enter or Space scrolls to the passage the note was on and flashes it', async () => {
+  const t = setup();
+  const hl = fakeHighlights(t.window);
+  await annotate(t, 'add the column', 'Which type?');
+  await annotate(t, 'drop the old table', 'Keep it a week first.');
+  t.document.querySelector('.aw-annot-send').click();
+  assert.deepEqual(t.store.sent('s1').at(-1).items.map((i) => [i.anchor, i.occurrence]), [['add the column', 0], ['drop the old table', 0]], 'the batch keeps where each passage is');
+  assert.deepEqual(hl.flashed(), [], 'the live marks went with Send all');
+
+  const stream = renderChat(t.document, [...CHAT, { user: t.board.typed[0].text }, { html: '<p><strong>Re note 1:</strong> a bigint.</p><p>Re note 2: agreed, drop the old table in a week.</p>' }]);
+  await wait(t.window); await wait(t.window);
+  const chips = chipsIn(t.document);
+  assert.deepEqual(chips.map((c) => c.getAttribute('role')), ['button', 'button']);
+
+  // Lay the stream out: the passage sits 600px down a 300px-tall view.
+  stream.getBoundingClientRect = () => ({ top: 0, bottom: 300, height: 300, left: 0, right: 400, width: 400 });
+  const rangeBox = t.window.Range.prototype.getBoundingClientRect;
+  t.window.Range.prototype.getBoundingClientRect = () => ({ top: 600, bottom: 620, height: 20, left: 0, right: 100, width: 100 });
+  try {
+    chips[1].click();
+  } finally { t.window.Range.prototype.getBoundingClientRect = rangeBox; }
+  assert.equal(stream.scrollTop, 500, 'scrolled so the passage is a third of the way down');
+  assert.deepEqual(hl.flashed(), ['drop the old table']);
+  assert.equal(hl.flashedIn()[0].closest('#chat-stream > *'), stream.children[1], 'the agent\'s original message, not the copy in the sent message or the reply');
+
+  assert.equal(key(t.window, chips[0], 'Enter'), true);
+  assert.deepEqual(hl.flashed(), ['add the column']);
+  assert.equal(key(t.window, chips[1], ' '), true);
+  assert.deepEqual(hl.flashed(), ['drop the old table']);
+  assert.equal(key(t.window, chips[1], 'a'), false, 'other keys are left alone');
+  assert.equal(t.board.toasts.filter((x) => x.severity === 'info').length, 0);
+
+  await new Promise((r) => t.window.setTimeout(r, 1700));
+  assert.deepEqual(hl.flashed(), [], 'the flash is brief');
+  t.ann.destroy();
+});
+
+test('a chip from a batch saved before passages were kept finds the excerpt itself', async () => {
+  const window = makeWindow();
+  const msg = 'I have a note on one passage of this conversation:\n\n1. > First we add the column.\n   > Then we backfill it in batches.\n\n   Order?';
+  window.localStorage.setItem('aw-annotations:sent:v1:s1', JSON.stringify([{ text: msg, sentAt: 1, items: [{ n: 1, quote: 'First we add the column.\nThen we backfill it in batches.', note: 'Order?' }] }]));
+  const t = setup({ storage: window.localStorage });
+  const hl = fakeHighlights(t.window);
+  const stream = renderChat(t.document, [...CHAT, { user: msg }, { html: '<p>Re note 1: First we add the column, yes.</p>' }]);
+  await wait(t.window); await wait(t.window);
+  chipsIn(t.document)[0].click();
+  assert.deepEqual(hl.flashed(), ['First we add the column.'], 'its first line, the paragraphs being separate in the stream');
+  assert.equal(hl.flashedIn()[0].closest('#chat-stream > *'), stream.children[1]);
+  t.ann.destroy();
+});
+
+test('a chip whose passage is outside the loaded conversation shows a toast, and never flashes the quoted copy', async () => {
+  const t = setup();
+  const hl = fakeHighlights(t.window);
+  await annotate(t, 'add the column', 'Which type?');
+  t.document.querySelector('.aw-annot-send').click();
+  const sent = t.board.typed[0].text;
+  const reply = { html: '<p>Re note 1: to add the column, use a bigint.</p>' };
+
+  // Only the sent message and the reply are loaded: both quote the passage.
+  renderChat(t.document, [{ user: sent }, reply]);
+  await wait(t.window); await wait(t.window);
+  chipsIn(t.document)[0].click();
+  assert.deepEqual(hl.flashed(), []);
+  assert.deepEqual(t.board.toasts.at(-1), { text: 'That passage is not in the loaded part of the conversation.', severity: 'info' });
+
+  // Only the reply is loaded.
+  renderChat(t.document, [reply]);
+  await wait(t.window); await wait(t.window);
+  const before = t.board.toasts.length;
+  chipsIn(t.document)[0].click();
+  assert.deepEqual(hl.flashed(), []);
+  assert.equal(t.board.toasts.length, before + 1);
+  assert.equal(t.board.toasts.at(-1).severity, 'info');
+  t.ann.destroy();
 });

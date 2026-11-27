@@ -62,6 +62,18 @@ test('the record of a sent batch numbers notes as the message does, skipping bla
   ]);
 });
 
+test('the record keeps where each passage is, so a reply\'s chip can find it again', () => {
+  assert.deepEqual(sentItems([
+    { quote: ' First  line\n', anchor: 'First  line', occurrence: 2, note: 'n' },
+    { quote: 'b', anchor: 'b', note: '' },
+    { quote: 'c', anchor: '', occurrence: 1 },
+  ]), [
+    { n: 1, quote: 'First line', note: 'n', anchor: 'First  line', occurrence: 2 },
+    { n: 2, quote: 'b', note: '', anchor: 'b' },
+    { n: 3, quote: 'c', note: '' },
+  ]);
+});
+
 test('what is typed in the message box goes at the bottom, after the request, trimmed', () => {
   const base = composeMessage([{ quote: 'x', note: 'y' }]);
   assert.equal(

@@ -119,12 +119,20 @@ export function selectionTarget(selection, stream, skip = OURS) {
 
 // The Range of an annotation's excerpt in the stream as it is now, or null when
 // that part of the conversation is not on screen (a window of history is).
-export function locate(stream, anchor, occurrence = 0, skip = OURS) {
+// Occurrences are counted over the whole stream, but one is only taken when it
+// ends before `before` (an element: a passage noted before a message was sent is
+// above that message) and lies in none of `avoid` (elements quoting it since).
+export function locate(stream, anchor, occurrence = 0, skip = OURS, { before = null, avoid = [] } = {}) {
   if (!stream || !anchor) return null;
   const { nodes, text } = textNodes(stream, skip);
+  const inside = (el) => el && el !== stream && stream.contains(el);
+  const limit = inside(before) ? startFrom(nodes, text.length, before, false) : text.length;
+  const spans = (avoid || []).filter(inside).map((el) => [startFrom(nodes, text.length, el, false), startFrom(nodes, text.length, el, true)]);
+  const ok = (i) => i + anchor.length <= limit && !spans.some(([a, b]) => i < b && i + anchor.length > a);
   let at = -1;
   let first = -1;
   for (let i = text.indexOf(anchor), n = 0; i !== -1; i = text.indexOf(anchor, i + 1), n += 1) {
+    if (!ok(i)) continue;
     if (first === -1) first = i;
     if (n === occurrence) { at = i; break; }
   }

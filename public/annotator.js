@@ -18,17 +18,23 @@
 // ensure() puts the same nodes back, so what is typed in them survives.
 //
 // What was sent is kept (store.recordSent), and the agent's "Re note N:" labels
-// in its replies become chips whose hover card shows that note (replies.js). An
-// adapter's batches(key) may widen which sent batches a reply is matched against.
+// in its replies become chips whose hover card shows that note (replies.js).
+// Clicking a chip (or Enter or Space on it) scrolls to the passage that note was
+// on and flashes it. An adapter's batches(key) may widen which sent batches a
+// reply is matched against; a batch carrying another conversation's `key` is
+// shown by that conversation's annotator, which the adapter's annotatorFor(key)
+// gives.
 
 import { composeMessage, sentItems, tidyQuote } from './compose.js';
 import { coreChatAdapter, selectionTarget, locate, UI_CLASS, OURS } from './panel.js';
-import { labelReplies } from './replies.js';
+import { labelReplies, chatEntries, chipNote, sentMessage } from './replies.js';
 import { KEY_PREFIX, SENT_PREFIX } from './store.js';
 
 const HL = 'aw-annotation';
 const HL_FOCUS = 'aw-annotation-focus';
 const COLLAPSED_KEY = 'aw-annotations:tray-collapsed';
+const FLASH_MS = 1600;
+const NOT_LOADED = 'That passage is not in the loaded part of the conversation.';
 
 const PEN = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
 
@@ -82,6 +88,7 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
   let editingItem = null; // the tray item whose note is being edited
   let selTarget = null;
   let flashId = null; // a passage just revealed from the tray, drawn in the focus colour briefly
+  let flashRange = null; // a passage just shown from a reply's chip, likewise
   let flashTimer = 0;
   let frame = 0;
   let labelsDirty = true;
@@ -177,6 +184,7 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
       el(doc, 'div', 'aw-annot-reply-pop-head', `Your note ${chip.dataset.n}`),
       el(doc, 'blockquote', 'aw-annot-reply-pop-quote', excerpt(chip.dataset.quote || '', 300)),
       el(doc, 'p', `aw-annot-reply-pop-note${chip.dataset.note ? '' : ' empty'}`, chip.dataset.note || 'No note: the passage alone was sent.'),
+      el(doc, 'p', 'aw-annot-reply-pop-hint', 'Click to show the passage'),
     );
     chip.setAttribute('aria-describedby', ui.pop.id);
     ui.pop.hidden = false;
@@ -200,7 +208,64 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
     ['mouseout', (e) => { if (chipOf(e) && !chipOf({ target: e.relatedTarget })) hidePop(); }],
     ['focusin', (e) => { const c = chipOf(e); if (c) showPop(c); }],
     ['focusout', (e) => { if (chipOf(e)) hidePop(); }],
+    ['click', (e) => { const c = chipOf(e); if (c) { e.preventDefault(); jump(c); } }],
+    ['keydown', (e) => {
+      const c = chipOf(e);
+      if (!c || (e.key !== 'Enter' && e.key !== ' ') || e.metaKey || e.ctrlKey || e.altKey) return;
+      e.preventDefault();
+      jump(c);
+    }],
   ];
+
+  // ── reply labels: back to the passage ───────────────────────────────────
+  // The note's own anchor and occurrence; a batch saved before those were kept
+  // has only its tidied excerpt, so that is looked for whole, then line by line
+  // (the excerpt's lines may sit in separate paragraphs of the stream).
+  function anchorsOf(item) {
+    if (item.anchor) return [[item.anchor, item.occurrence || 0]];
+    const q = String(item.quote || '').replace(/…$/, '');
+    return [q, ...q.split('\n').map((l) => l.trim())].filter(Boolean).map((t) => [t, 0]);
+  }
+
+  // Scroll to and flash the passage a sent note was on, in this conversation.
+  // Only text above the message that sent it counts (that message quotes it, and
+  // so may the reply), and never the reply holding `chip`. False when it is not
+  // in the loaded part of the conversation.
+  function showPassage(item, batch, chip = null) {
+    const p = ensure();
+    if (!p || !item) return false;
+    let entries = [];
+    try { entries = (source.entries || chatEntries)(p.stream); } catch { entries = []; }
+    const own = chip && p.stream.contains(chip) ? chip : null;
+    const before = sentMessage(entries, batch?.text, own);
+    const reply = own ? entries.find((e) => e.kind === 'reply' && e.node?.contains(own))?.node : null;
+    let range = null;
+    for (const [anchor, n] of anchorsOf(item)) {
+      range = locate(p.stream, anchor, n, skipOf(p), { before, avoid: [reply] });
+      if (range) break;
+    }
+    if (!range) return false;
+    scrollTo(p, range);
+    flashId = null;
+    flashRange = range;
+    win.clearTimeout(flashTimer);
+    flashTimer = win.setTimeout(() => { flashRange = null; paint(); }, FLASH_MS);
+    paint();
+    return true;
+  }
+
+  function jump(chip) {
+    const hit = chipNote(chip);
+    if (!hit) return;
+    hidePop();
+    const from = hit.batch?.key;
+    let shown = false;
+    try {
+      if (!from || from === sid) shown = showPassage(hit.item, hit.batch, chip);
+      else shown = !!source.annotatorFor?.(from)?.showPassage(hit.item, hit.batch, chip);
+    } catch { shown = false; }
+    if (!shown) toastOf(NOT_LOADED, 'info');
+  }
 
   // ── selection → Annotate button ─────────────────────────────────────────
   function onSelectionEnd() {
@@ -308,6 +373,7 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
     const all = located.filter((x) => x.range && x.a.id !== focusId).map((x) => x.range);
     if (editing?.target?.range) all.push(editing.target.range);
     const focus = located.filter((x) => x.range && x.a.id === focusId).map((x) => x.range);
+    if (flashRange?.startContainer?.isConnected && flashRange.endContainer?.isConnected) focus.push(flashRange);
     lendHighlights(win, owner, all, focus);
     ui.layer.replaceChildren();
     if (!panel) return;
@@ -335,20 +401,25 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
     }
   }
 
-  function reveal(id) {
-    const hit = rangesNow().find((x) => x.a.id === id);
-    if (!hit?.range || !panel) { toastOf('That passage is not in the loaded part of the conversation.', 'info'); return; }
-    if (panel.scrolls) {
-      const r = hit.range.getBoundingClientRect();
-      const v = panel.stream.getBoundingClientRect();
-      panel.stream.scrollTop += r.top - v.top - v.height / 3;
+  function scrollTo(p, range) {
+    if (p.scrolls) {
+      const r = range.getBoundingClientRect();
+      const v = p.stream.getBoundingClientRect();
+      p.stream.scrollTop += r.top - v.top - v.height / 3;
     } else {
-      const at = hit.range.startContainer;
+      const at = range.startContainer;
       (at.nodeType === 1 ? at : at.parentElement)?.scrollIntoView?.({ block: 'center' });
     }
+  }
+
+  function reveal(id) {
+    const hit = rangesNow().find((x) => x.a.id === id);
+    if (!hit?.range || !panel) { toastOf(NOT_LOADED, 'info'); return; }
+    scrollTo(panel, hit.range);
     flashId = id;
+    flashRange = null;
     win.clearTimeout(flashTimer);
-    flashTimer = win.setTimeout(() => { flashId = null; paint(); }, 1600);
+    flashTimer = win.setTimeout(() => { flashId = null; paint(); }, FLASH_MS);
     paint();
   }
 
@@ -508,6 +579,7 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
     refresh,
     sendAll,
     openEditor,
+    showPassage,
     get sessionId() { return sid; },
     destroy() {
       win.clearInterval(tick);

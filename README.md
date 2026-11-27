@@ -12,7 +12,9 @@ comment-then-send flow to agent conversations. In a session's **Chat** view (and
    typed in the message box goes at the bottom of that same message. The notes are cleared from
    the tray and the message box is left empty.
 5. When the agent replies, each `Re note N` label in its answer becomes a small chip. Hover it (or
-   focus it with Tab) to see the excerpt and the note it answers.
+   focus it with Tab) to see the excerpt and the note it answers. Click it (or press Enter or Space
+   while it has focus) to scroll back to the passage that note was on, which flashes briefly, as
+   clicking an excerpt in the tray does.
 
 ```text
 I have notes on 2 passages of this conversation:
@@ -54,7 +56,9 @@ idea box** for that conversation, with anything already typed there at the botto
 Send, as you would. From a step's conversation with the session that is the step page's Add idea box;
 the wrangler forwards your words to the session unchanged. When the session or the wrangler answers
 with `Re note N:`, the label becomes a chip with the same hover card, in the step's thread and in the
-conversation with the wrangler where the forward's answer is shown.
+conversation with the wrangler where the forward's answer is shown. Clicking it jumps to the passage
+in the conversation the note was made in: from the forward's answer in a conversation with the
+wrangler, that is the step's thread.
 
 Notes are kept per conversation, never mixed with a session's notes on the board: one list per step's
 conversation with its session and one per conversation with the wrangler.
@@ -98,11 +102,16 @@ Needs Agent Wrangler with host API 2.0.0 or later.
   reply bounds it (the reply answers the batch sent before that one), and otherwise the most
   recent batch is used.
 - Chips are drawn again whenever the chat redraws, and after a reload.
+- Clicking a chip looks for the passage only above the **Send all** message that sent its note, so it
+  never lands on the copy quoted in that message or in the reply itself. If the passage is not in the
+  loaded part of the conversation, a toast says so, as it does for an excerpt in the tray. Batches
+  sent before chips could jump keep only the tidied excerpt, so their chips look for that text (or
+  its first line found) instead.
 - **Clear** asks for a second press before it drops every note for the session.
 - Notes live in the browser's `localStorage` under `aw-annotations:v1:<session id>`, so they are
-  per browser, not shared between devices. What **Send all** sent (each note's number, excerpt and
-  note, and the whole message text, draft included) is kept under `aw-annotations:sent:v1:<session id>`, the last 20
-  batches per session, so the chips can show it.
+  per browser, not shared between devices. What **Send all** sent (each note's number, excerpt,
+  note and where its passage is, and the whole message text, draft included) is kept under `aw-annotations:sent:v1:<session id>`, the last 20
+  batches per session, so the chips can show it and jump back to it.
 - In Wrangler²'s own chats the key is the conversation's instead of a session id:
   `w2:talk:<conversation id>` for a conversation with the wrangler, and `w2:thread:<signature>` for a
   step's conversation with its session, whose markup carries no id (the signature is taken from the

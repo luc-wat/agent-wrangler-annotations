@@ -2,6 +2,8 @@
 // answer with "Re note N:" (compose.js); this finds those labels in the agent's
 // messages in the Chat stream, works out which sent batch each reply answers,
 // and wraps each label in a chip whose hover shows that note's excerpt and text.
+// A chip is a button: chipNote() gives the note and batch it answers, and the
+// annotator jumps to that note's passage when it is pressed.
 //
 // Which batch: a batch's own message is in the stream as a user message, so a
 // reply answers the nearest batch message above it. When that message is out of
@@ -55,7 +57,24 @@ export function batchForReplies(entries, batches) {
   return out;
 }
 
+// The message that sent a batch: the last user entry whose text is the batch's
+// that comes before `upTo` (a node in the stream), or the last one at all.
+export function sentMessage(entries, text, upTo = null) {
+  const sig = squash(text);
+  if (!sig) return null;
+  const FOLLOWING = 4; // Node.DOCUMENT_POSITION_FOLLOWING
+  const sent = entries.filter((e) => e.kind === 'user' && e.node && squash(e.text) === sig);
+  const above = upTo ? sent.filter((e) => e.node.compareDocumentPosition(upTo) & FOLLOWING) : sent;
+  return (above.length ? above : sent).at(-1)?.node || null;
+}
+
 const CHIP = 'aw-annot-reply';
+const chipNotes = new WeakMap(); // chip → { item, batch }
+
+// The sent note a chip answers and the batch it was in, or null.
+export function chipNote(chip) {
+  return chipNotes.get(chip) || null;
+}
 
 function textNodesOf(root) {
   const doc = root.ownerDocument;
@@ -97,7 +116,7 @@ export function labelReplies(stream, batches, { entries: entriesOf = chatEntries
     // Chips from an earlier pass: keep them if their note still exists.
     for (const chip of r.node.querySelectorAll(`.${CHIP}`)) {
       const item = noteOf(Number(chip.dataset.n));
-      if (item) { dress(chip, item); chips.push(chip); } else chip.replaceWith(...chip.childNodes);
+      if (item) { dress(chip, item, batch); chips.push(chip); } else { chipNotes.delete(chip); chip.replaceWith(...chip.childNodes); }
     }
     if (!batch) return;
     const { nodes, text } = textNodesOf(r.node);
@@ -113,16 +132,18 @@ export function labelReplies(stream, batches, { entries: entriesOf = chatEntries
       chip.className = CHIP;
       chip.dataset.n = String(l.n);
       chip.tabIndex = 0;
+      chip.setAttribute('role', 'button');
       label.replaceWith(chip);
       chip.append(label);
-      dress(chip, noteOf(l.n));
+      dress(chip, noteOf(l.n), batch);
       chips.push(chip);
     }
   });
   return chips;
 }
 
-function dress(chip, item) {
+function dress(chip, item, batch) {
+  chipNotes.set(chip, { item, batch });
   if (chip.dataset.quote !== item.quote) chip.dataset.quote = item.quote;
   if (chip.dataset.note !== item.note) chip.dataset.note = item.note;
   const aria = `Answers note ${item.n}: ${item.note || item.quote}`;
