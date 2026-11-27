@@ -69,8 +69,10 @@ function textNodesOf(root) {
   return { nodes, text: nodes.map((x) => x.node.data).join('') };
 }
 
-// The stream's user messages and agent replies, in order.
-function streamEntries(stream) {
+// Core Chat's user messages and agent replies, in order. Another chat
+// (wrangler2.js) passes its own `entries`: { kind: 'user', text } for what the
+// human sent, { kind: 'reply', node } for each answer, the node holding its text.
+export function chatEntries(stream) {
   const out = [];
   for (const node of stream.children) {
     if (node.classList.contains('chat-user')) out.push({ kind: 'user', text: node.querySelector('.chat-user-text')?.textContent ?? node.textContent, node });
@@ -82,10 +84,10 @@ function streamEntries(stream) {
 // Wrap every label in the agent's replies in a chip carrying its note, and
 // refresh chips already drawn. Idempotent: our own changes leave nothing new
 // to do, so the stream's MutationObserver settles. Returns the chips.
-export function labelReplies(stream, batches) {
+export function labelReplies(stream, batches, { entries: entriesOf = chatEntries } = {}) {
   if (!stream) return [];
   const doc = stream.ownerDocument;
-  const entries = streamEntries(stream);
+  const entries = entriesOf(stream);
   const replies = entries.filter((e) => e.kind === 'reply');
   const which = batchForReplies(entries, batches);
   const chips = [];

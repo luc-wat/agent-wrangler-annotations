@@ -1,36 +1,34 @@
-// The annotation UI on core's Chat panel: an "Annotate" button over a fresh
+// The annotation UI on one conversation: an "Annotate" button over a fresh
 // selection, a note editor, the marks (CSS highlights plus numbered pins) and
 // the tray listing every note with Edit and Remove, and Send all.
 //
-// Everything is drawn INSIDE the panel's own nodes (#chat-stream-wrap and
-// #chat-wrap), never on <body>: api.mountSession moves those nodes into a
-// Wrangler² view, which may sit in a modal <dialog>, and anything outside it
-// would be inert there. Moving the panel moves our nodes with it.
+// Which conversation, and how its notes are sent, is the adapter's:
+// - core's Chat panel (panel.js coreChatAdapter, the default): the session the
+//   panel shows, sent through api.sessionPanel.type;
+// - one of Wrangler²'s own chats (wrangler2.js): a step's conversation with its
+//   session or a conversation with the wrangler, sent through its Add idea box.
 //
-// The session is the one the panel shows, read from api.front().session; the
-// board selects the session it lends, so this holds on the board and in every
-// Wrangler² view alike. Send all types through api.sessionPanel.type, which
-// writes into that same panel's composer and sends it.
+// An adapter's find() returns the surface as it is now: `stream` (the text that
+// is annotated), `host` (a positioned element the floating UI goes in), `wrap`
+// and `before` (where the tray goes), `input` (the box whose draft is appended),
+// `skip` (parts of the stream that are not the conversation) and `scrolls`
+// (whether the stream scrolls itself). Everything is drawn INSIDE those nodes,
+// never on <body>: the panel or the chat may sit in a modal <dialog>, and
+// anything outside it would be inert there. When they move or are drawn again,
+// ensure() puts the same nodes back, so what is typed in them survives.
 //
 // What was sent is kept (store.recordSent), and the agent's "Re note N:" labels
-// in its replies become chips whose hover card shows that note (replies.js).
+// in its replies become chips whose hover card shows that note (replies.js). An
+// adapter's batches(key) may widen which sent batches a reply is matched against.
 
 import { composeMessage, sentItems, tidyQuote } from './compose.js';
-import { findChatPanel, selectionTarget, locate } from './panel.js';
+import { coreChatAdapter, selectionTarget, locate, UI_CLASS, OURS } from './panel.js';
 import { labelReplies } from './replies.js';
 import { KEY_PREFIX, SENT_PREFIX } from './store.js';
 
 const HL = 'aw-annotation';
 const HL_FOCUS = 'aw-annotation-focus';
 const COLLAPSED_KEY = 'aw-annotations:tray-collapsed';
-
-const REFUSALS = {
-  'no-panel': 'Open the session’s Chat to send your notes.',
-  gated: 'This session is locked, so nothing can be typed into it.',
-  blocked: 'The session is waiting on a prompt in its Terminal; answer it first.',
-  'not-sent': 'The message is in the box but did not send (no connection?). Press Send, then Clear the notes.',
-  capability: 'Agent Wrangler refused typing into the session (session:type).',
-};
 
 const PEN = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
 
@@ -53,11 +51,34 @@ const excerpt = (text, max = 220) => {
   return t.length > max ? `${t.slice(0, max).trimEnd()}…` : t;
 };
 
-export function createAnnotator({ document: doc = globalThis.document, api = null, store, storage = globalThis.localStorage, toast = null } = {}) {
+// Several conversations can be on screen at once (the board's Chat beside a
+// Wrangler² page, a step's session thread beside its wrangler conversation), but
+// a highlight name is the page's: each annotator lends its ranges to one set.
+const highlightOwners = new WeakMap(); // window → Map(owner → { all, focus })
+function lendHighlights(win, owner, all, focus) {
+  const highlights = win.CSS?.highlights;
+  const Highlight = win.Highlight;
+  if (!highlights || typeof Highlight !== 'function') return;
+  let owners = highlightOwners.get(win);
+  if (!owners) highlightOwners.set(win, (owners = new Map()));
+  if (all || focus) owners.set(owner, { all: all || [], focus: focus || [] });
+  else owners.delete(owner);
+  if (!owners.size) { highlights.delete(HL); highlights.delete(HL_FOCUS); return; }
+  const lent = [...owners.values()];
+  highlights.set(HL, new Highlight(...lent.flatMap((x) => x.all)));
+  highlights.set(HL_FOCUS, new Highlight(...lent.flatMap((x) => x.focus)));
+}
+
+let instances = 0;
+
+export function createAnnotator({ document: doc = globalThis.document, api = null, store, storage = globalThis.localStorage, toast = null, adapter = null } = {}) {
   const win = doc.defaultView || globalThis;
+  const source = adapter || coreChatAdapter(doc, api);
+  const owner = {};
   let panel = null;
   let sid = null;
-  let editing = null; // { id|null, target? } while the new-note editor is open
+  let drawnFor = undefined; // the key the tray was last drawn for, on a surface
+  let editing = null; // { sid, target } while the new-note editor is open
   let editingItem = null; // the tray item whose note is being edited
   let selTarget = null;
   let flashId = null; // a passage just revealed from the tray, drawn in the focus colour briefly
@@ -65,19 +86,21 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
   let frame = 0;
   let labelsDirty = true;
   let popChip = null;
+  let uiFocus = null; // our field that had focus, given it back when our nodes move
   let collapsed = false;
   try { collapsed = storage?.getItem(COLLAPSED_KEY) === '1'; } catch { /* default open */ }
   const offs = [];
 
   const ui = {
-    layer: el(doc, 'div', 'aw-annot-layer'),
-    annotate: el(doc, 'button', 'aw-annot-add'),
-    editor: el(doc, 'form', 'aw-annot-editor'),
-    tray: el(doc, 'section', 'aw-annot-tray'),
-    pop: el(doc, 'div', 'aw-annot-reply-pop'),
+    layer: el(doc, 'div', `aw-annot-layer ${UI_CLASS}`),
+    annotate: el(doc, 'button', `aw-annot-add ${UI_CLASS}`),
+    editor: el(doc, 'form', `aw-annot-editor ${UI_CLASS}`),
+    tray: el(doc, 'section', `aw-annot-tray ${UI_CLASS}`),
+    pop: el(doc, 'div', `aw-annot-reply-pop ${UI_CLASS}`),
   };
   ui.pop.hidden = true;
-  ui.pop.id = 'aw-annot-reply-pop';
+  ui.pop.id = `aw-annot-reply-pop${instances ? `-${instances}` : ''}`;
+  instances += 1;
   ui.pop.setAttribute('role', 'tooltip');
   ui.layer.setAttribute('aria-hidden', 'true');
   ui.annotate.type = 'button';
@@ -87,6 +110,7 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
   ui.editor.hidden = true;
   ui.tray.hidden = true;
   ui.tray.setAttribute('aria-label', 'Annotations');
+  ui.tray.classList.add(...String(source.trayClass || '').split(/\s+/).filter(Boolean));
 
   // The selection is kept while the button is pressed.
   ui.annotate.addEventListener('mousedown', (e) => e.preventDefault());
@@ -95,15 +119,22 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
     e.stopPropagation();
     if (selTarget) openEditor(selTarget);
   });
+  for (const n of [ui.editor, ui.tray]) {
+    n.addEventListener('focusin', (e) => { if (e.target?.matches?.('textarea')) uiFocus = e.target; });
+    n.addEventListener('focusout', (e) => { if (e.target === uiFocus && e.target.isConnected && e.relatedTarget) uiFocus = null; });
+  }
 
-  const sessionNow = () => {
-    try { return api?.front?.()?.session || null; } catch { return null; }
+  const keyNow = () => {
+    try { return source.key() || null; } catch { return null; }
   };
+  const skipOf = (p) => p?.skip || OURS;
 
-  // Attach our nodes to the panel (once: core's panel nodes are never rebuilt,
-  // only moved). Returns the panel or null.
+  // Attach our nodes to the surface, again whenever it was drawn anew or moved
+  // (core's panel nodes are only ever moved; Wrangler² draws its chats again on
+  // every change). Returns the surface or null.
   function ensure() {
-    const p = findChatPanel(doc);
+    let p = null;
+    try { p = source.find(); } catch { p = null; }
     if (!p) return null;
     if (panel?.stream !== p.stream) {
       if (panel) {
@@ -116,15 +147,24 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
       labelsDirty = true;
     }
     panel = p;
-    if (ui.layer.parentNode !== p.streamWrap) p.streamWrap.append(ui.layer);
-    if (ui.annotate.parentNode !== p.streamWrap) p.streamWrap.append(ui.annotate);
-    if (ui.editor.parentNode !== p.streamWrap) p.streamWrap.append(ui.editor);
-    if (ui.pop.parentNode !== p.streamWrap) p.streamWrap.append(ui.pop);
-    if (ui.tray.parentNode !== p.wrap) p.wrap.insertBefore(ui.tray, p.composer || null);
+    if (p.positionHost && !p.host.classList.contains('aw-annot-host')) p.host.classList.add('aw-annot-host');
+    const lost = uiFocus && !uiFocus.isConnected ? uiFocus : null;
+    for (const n of [ui.layer, ui.annotate, ui.editor, ui.pop]) if (n.parentNode !== p.host) p.host.append(n);
+    if (ui.tray.parentNode !== p.wrap || (p.before && ui.tray.nextSibling !== p.before)) p.wrap.insertBefore(ui.tray, p.before || null);
+    if (lost?.isConnected && (!doc.activeElement || doc.activeElement === doc.body)) {
+      try { lost.focus({ preventScroll: true }); } catch { /* fine */ }
+    }
     return p;
   }
 
-  const onStreamChange = () => { labelsDirty = true; schedulePaint(); };
+  // Our own redraws (pins, the tray) are inside the stream on some surfaces: only
+  // a change to the conversation itself relabels it.
+  const ours = (n) => !!(n?.nodeType === 1 ? n : n?.parentElement)?.closest?.(OURS);
+  const onStreamChange = (records) => {
+    if (Array.isArray(records) && records.length && records.every((r) => ours(r.target))) return;
+    labelsDirty = true;
+    schedulePaint();
+  };
   const streamObserver = typeof win.MutationObserver === 'function' ? new win.MutationObserver(onStreamChange) : null;
 
   // ── reply labels: the hover card ────────────────────────────────────────
@@ -140,7 +180,7 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
     );
     chip.setAttribute('aria-describedby', ui.pop.id);
     ui.pop.hidden = false;
-    const box = p.streamWrap.getBoundingClientRect();
+    const box = p.host.getBoundingClientRect();
     const r = chip.getBoundingClientRect();
     const width = Math.min(360, Math.max(220, box.width - 24));
     ui.pop.style.width = `${width}px`;
@@ -167,12 +207,12 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
     const p = ensure();
     if (!p || editing) return;
     const sel = win.getSelection?.();
-    const target = sessionNow() ? selectionTarget(sel, p.stream) : null;
+    const target = keyNow() ? selectionTarget(sel, p.stream, skipOf(p)) : null;
     selTarget = target;
     if (!target) { ui.annotate.hidden = true; return; }
     const rects = target.range.getClientRects?.() || [];
     const last = rects.length ? rects[rects.length - 1] : target.range.getBoundingClientRect?.();
-    const box = p.streamWrap.getBoundingClientRect();
+    const box = p.host.getBoundingClientRect();
     if (!last) { ui.annotate.hidden = true; return; }
     const top = Math.max(4, Math.min(last.bottom - box.top + 6, box.height - 36));
     const left = Math.max(4, Math.min(last.right - box.left - 40, box.width - 120));
@@ -189,7 +229,7 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
   // ── the new-note editor ─────────────────────────────────────────────────
   function openEditor(target) {
     const p = ensure();
-    const at = sessionNow();
+    const at = keyNow();
     if (!p || !at) return;
     editing = { sid: at, target };
     ui.annotate.hidden = true;
@@ -218,7 +258,7 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
 
   // Below the passage when there is room, above it otherwise, never off the pane.
   function placeEditor(p, range) {
-    const wrapBox = p.streamWrap.getBoundingClientRect();
+    const wrapBox = p.host.getBoundingClientRect();
     const rects = range.getClientRects?.() || [];
     const first = rects[0] || range.getBoundingClientRect?.();
     const last = rects[rects.length - 1] || first;
@@ -259,30 +299,25 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
 
   function rangesNow() {
     if (!panel || !sid) return [];
-    return store.list(sid).map((a, i) => ({ a, n: i + 1, range: locate(panel.stream, a.anchor, a.occurrence) }));
+    return store.list(sid).map((a, i) => ({ a, n: i + 1, range: locate(panel.stream, a.anchor, a.occurrence, skipOf(panel)) }));
   }
 
   function paint() {
-    const highlights = win.CSS?.highlights;
-    const Highlight = win.Highlight;
     const located = rangesNow();
     const focusId = editingItem || flashId;
-    if (highlights && typeof Highlight === 'function') {
-      const all = located.filter((x) => x.range && x.a.id !== focusId).map((x) => x.range);
-      if (editing?.target?.range) all.push(editing.target.range);
-      const focus = located.filter((x) => x.range && x.a.id === focusId).map((x) => x.range);
-      highlights.set(HL, new Highlight(...all));
-      highlights.set(HL_FOCUS, new Highlight(...focus));
-    }
+    const all = located.filter((x) => x.range && x.a.id !== focusId).map((x) => x.range);
+    if (editing?.target?.range) all.push(editing.target.range);
+    const focus = located.filter((x) => x.range && x.a.id === focusId).map((x) => x.range);
+    lendHighlights(win, owner, all, focus);
     ui.layer.replaceChildren();
     if (!panel) return;
     if (labelsDirty) {
       labelsDirty = false;
-      labelReplies(panel.stream, sid ? store.sent(sid) : []);
+      labelReplies(panel.stream, sid ? (source.batches ? source.batches(sid) : store.sent(sid)) : [], source.entries ? { entries: source.entries } : undefined);
       if (popChip && !popChip.isConnected) hidePop();
       streamObserver?.takeRecords?.();
     }
-    const box = panel.streamWrap.getBoundingClientRect();
+    const box = panel.host.getBoundingClientRect();
     const view = panel.stream.getBoundingClientRect();
     for (const { a, n, range } of located) {
       if (!range) continue;
@@ -303,9 +338,14 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
   function reveal(id) {
     const hit = rangesNow().find((x) => x.a.id === id);
     if (!hit?.range || !panel) { toastOf('That passage is not in the loaded part of the conversation.', 'info'); return; }
-    const r = hit.range.getBoundingClientRect();
-    const v = panel.stream.getBoundingClientRect();
-    panel.stream.scrollTop += r.top - v.top - v.height / 3;
+    if (panel.scrolls) {
+      const r = hit.range.getBoundingClientRect();
+      const v = panel.stream.getBoundingClientRect();
+      panel.stream.scrollTop += r.top - v.top - v.height / 3;
+    } else {
+      const at = hit.range.startContainer;
+      (at.nodeType === 1 ? at : at.parentElement)?.scrollIntoView?.({ block: 'center' });
+    }
     flashId = id;
     win.clearTimeout(flashTimer);
     flashTimer = win.setTimeout(() => { flashId = null; paint(); }, 1600);
@@ -320,9 +360,11 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
   }
 
   let clearArmed = null;
+  // The tray is drawn even while the surface is away (mid-redraw), so it is
+  // right when it is put back.
   function render() {
     const p = ensure();
-    if (!p) return;
+    if (p) drawnFor = sid;
     const list = sid ? store.list(sid) : [];
     ui.tray.hidden = list.length === 0;
     ui.tray.classList.toggle('collapsed', collapsed);
@@ -340,14 +382,14 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
     });
     if (clearArmed) clear.classList.add('armed');
     const send = button(doc, 'aw-annot-primary aw-annot-send', 'Send all', sendAll);
-    send.title = 'Send every note to this session as one message, with anything typed in the message box at the end';
+    send.title = `Send every note to ${source.sentTo || 'the session'} as one message, with anything typed in the ${source.boxName || 'message box'} at the end`;
     head.append(toggle, el(doc, 'span', 'aw-annot-spacer'), clear, send);
     ui.tray.append(head);
     if (collapsed) { paint(); return; }
 
     const ol = el(doc, 'ol', 'aw-annot-list');
     list.forEach((a, i) => ol.append(itemNode(a, i + 1)));
-    ui.tray.append(ol, el(doc, 'p', 'aw-annot-foot', 'Anything typed in the message box is sent after your notes, in the same message.'));
+    ui.tray.append(ol, el(doc, 'p', 'aw-annot-foot', `Anything typed in the ${source.boxName || 'message box'} is sent after your notes, in the same message.`));
     paint();
   }
 
@@ -392,50 +434,41 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
   }
 
   // ── Send all ────────────────────────────────────────────────────────────
-  // Set the message box as the composer would, so it redraws (height, Send).
-  function setInput(input, value) {
-    input.value = value;
-    try { input.dispatchEvent(new win.Event('input', { bubbles: true })); } catch { /* fine */ }
-  }
-
   function toastOf(text, severity) {
     if (toast) return toast(text, severity);
     try { if (api?.ui?.toast?.({ text, severity }) === true) return; } catch { /* fall through */ }
     win.console?.info?.(`[annotations] ${text}`);
   }
 
+  // Whatever is typed in the surface's box goes at the bottom of the notes, in
+  // the same message; the adapter sends it and leaves the draft as it was when
+  // the message does not go.
   function sendAll() {
-    const at = sessionNow();
+    const at = keyNow();
     const list = at ? store.list(at) : [];
     if (!at || at !== sid || !list.length) return { ok: false, reason: 'no-session' };
     if (editingItem) { toastOf('Save or cancel the note you are editing first.', 'warning'); return { ok: false, reason: 'editing' }; }
-    if (typeof api?.sessionPanel?.type !== 'function') {
-      toastOf('This Agent Wrangler cannot type into a session (host API 1.68 or later is needed).', 'error');
-      return { ok: false, reason: 'unsupported' };
-    }
-    // Whatever is typed in the message box goes at the bottom of the notes, in
-    // the same message. type() appends to the box, so the draft is taken out
-    // first (or it would be sent twice) and put back if the send fails.
     const p = ensure();
-    const input = p?.input || null;
-    const draft = input ? input.value : '';
+    const draft = p?.input ? p.input.value : '';
     const text = composeMessage(list, { draft });
-    if (draft) setInput(input, '');
-    const r = api.sessionPanel.type(text, { submit: true }) || { ok: false, reason: 'no-panel' };
-    if (!(r.ok && r.submitted) && draft) setInput(input, draft);
+    let r;
+    try { r = source.send({ text, draft, surface: p }); } catch { r = null; }
+    r ||= { ok: false, reason: 'no-panel' };
     if (r.ok && r.submitted) {
       store.recordSent(at, { text, items: sentItems(list) });
       store.clear(at);
-      toastOf(`Sent ${list.length} ${list.length === 1 ? 'note' : 'notes'} to the session.`, 'success');
+      toastOf(`Sent ${list.length} ${list.length === 1 ? 'note' : 'notes'} to ${source.sentTo || 'the session'}.`, 'success');
     } else {
-      toastOf(REFUSALS[r.reason] || `Not sent (${r.reason || 'unknown'}).`, 'error');
+      toastOf(source.refusals?.[r.reason] || `Not sent (${r.reason || 'unknown'}).`, 'error');
     }
     return r;
   }
 
   // ── wiring ──────────────────────────────────────────────────────────────
+  // The tray is drawn again when the conversation changes or was never drawn on a
+  // surface; otherwise our nodes are only put back, keeping a note being edited.
   function refresh() {
-    const next = sessionNow();
+    const next = keyNow();
     if (next !== sid) {
       sid = next;
       editingItem = null;
@@ -443,7 +476,8 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
       ui.annotate.hidden = true;
       selTarget = null;
     }
-    render();
+    if (drawnFor !== sid) { render(); return; }
+    if (ensure()) { labelsDirty = true; paint(); }
   }
 
   const onStorage = (e) => {
@@ -462,11 +496,11 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
   win.addEventListener?.('resize', schedulePaint);
   win.addEventListener?.('storage', onStorage);
   offs.push(store.onChange((changed) => { if (changed === sid) render(); }));
-  if (typeof api?.front?.onChange === 'function') offs.push(api.front.onChange(refresh));
+  try { offs.push(source.watch?.(refresh)); } catch { /* fine */ }
   // The panel's nodes may not exist when the board half loads, and the
   // session can change without a front change reaching us on an older board:
   // a slow tick keeps both honest.
-  const tick = win.setInterval(() => { if (!panel || !panel.wrap.isConnected || sessionNow() !== sid) refresh(); }, 1000);
+  const tick = win.setInterval(() => { if (!panel || !panel.wrap.isConnected || keyNow() !== sid) refresh(); }, 1000);
 
   refresh();
 
@@ -477,6 +511,7 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
     get sessionId() { return sid; },
     destroy() {
       win.clearInterval(tick);
+      win.clearTimeout(flashTimer);
       doc.removeEventListener('mouseup', deferSelection);
       doc.removeEventListener('keyup', deferSelection);
       doc.removeEventListener('selectionchange', onSelectionChange);
@@ -486,10 +521,10 @@ export function createAnnotator({ document: doc = globalThis.document, api = nul
       streamObserver?.disconnect();
       panel?.stream.removeEventListener('scroll', schedulePaint);
       if (panel) for (const [type, fn] of popEvents) panel.stream.removeEventListener(type, fn);
-      if (panel) labelReplies(panel.stream, []);
+      if (panel) labelReplies(panel.stream, [], source.entries ? { entries: source.entries } : undefined);
+      if (panel?.positionHost) panel.host.classList.remove('aw-annot-host');
       for (const n of Object.values(ui)) n.remove();
-      win.CSS?.highlights?.delete(HL);
-      win.CSS?.highlights?.delete(HL_FOCUS);
+      lendHighlights(win, owner, null, null);
     },
   };
 }

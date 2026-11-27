@@ -1,5 +1,6 @@
 /* Session annotations: marks, note editor and tray, drawn inside core's Chat
-   panel (#chat-stream-wrap and #chat-wrap). Colours come from the board's theme
+   panel (#chat-stream-wrap and #chat-wrap) and inside Wrangler²'s own chats
+   (see the end of this file). Colours come from the board's theme
    variables, so every theme (and Wrangler²'s own) dresses it. */
 
 ::highlight(aw-annotation) {
@@ -118,3 +119,13 @@
 }
 .aw-annot-reply-pop-note { margin: 0; white-space: pre-wrap; line-height: 1.45; }
 .aw-annot-reply-pop-note.empty { color: var(--fg-subtle, #888); font-style: italic; }
+
+/* Wrangler²'s own chats (wrangler2.js): the conversation, or a thread's parent,
+   is the positioned box the floating parts sit in, and the tray is one more row
+   of the conversation, above its Add idea box. */
+.aw-annot-host { position: relative; }
+.aw-annot-tray.aw-annot-w2 { max-height: none; }
+.aw-annot-tray.aw-annot-w2-talk {
+  border: 1px solid var(--border-muted, #333); border-radius: 10px; background: var(--surface-2, #262626);
+}
+.aw-annot-tray.aw-annot-w2-talk .aw-annot-item { background: var(--surface, #1c1c1c); }
